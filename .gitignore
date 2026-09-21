@@ -1,0 +1,4 @@
+/build/
+/portable/
+__pycache__/
+*.pyc
