@@ -1,0 +1,53 @@
+name: Build and test
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y qt6-base-dev libssl-dev libavformat-dev libavcodec-dev libavutil-dev libswscale-dev libswresample-dev libsdl2-dev ffmpeg python3 pkg-config
+      - run: bash scripts/build.sh --build-dir build --jobs 2 --test --package DEB
+      - run: cd build && cpack -G TGZ -B packages
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-packages
+          path: |
+            build/packages/*.deb
+            build/packages/*.tar.gz
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+            mingw-w64-ucrt-x86_64-pkgconf
+            mingw-w64-ucrt-x86_64-qt6-base
+            mingw-w64-ucrt-x86_64-SDL2
+            mingw-w64-ucrt-x86_64-ffmpeg
+            mingw-w64-ucrt-x86_64-openssl
+      - run: bash scripts/build.sh --build-dir build --jobs 2 --test
+      - run: |
+          mkdir -p portable/platforms
+          cp build/openwatch.exe portable/
+          cp /ucrt64/share/qt6/plugins/platforms/qwindows.dll portable/platforms/
+          for binary in build/openwatch.exe /ucrt64/share/qt6/plugins/platforms/qwindows.dll; do
+            ldd "$binary" | awk '/\/ucrt64\// {print $3}' | while read -r dll; do cp "$dll" portable/; done
+          done
+          cp LICENSE README.md portable/
+          cp -r images docs portable/
+          cp -r /ucrt64/share/licenses portable/dependency-licenses
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-portable-experimental
+          path: portable/
