@@ -1,4 +1,36 @@
+# Build and release outputs
 /build/
+/build-*/
 /portable/
+/dist/
+/work/
+/outputs/
+CMakeUserPresets.json
+*.AppImage
+*.AppImage.sha256
+*.deb
+*.rpm
+*.exe
+*.dll
+*.o
+*.a
+*.so
+# Local caches and editor settings
 __pycache__/
-*.pyc
+*.py[cod]
+.cache/
+.idea/
+.vscode/
+# Private captures, recordings, disk samples and credentials
+*.pcap
+*.pcapng
+*.mkv
+*.mp4
+*.h264
+*.h265
+*.bin
+*.img
+*.raw
+*.vault
+.env
+.env.*

@@ -2,11 +2,11 @@
 
 **A free, open-source, experimental desktop Video Management System for Xiongmai/XM recorders and IP cameras.** Built with C++17, Qt 6 and FFmpeg, with a native dark interface and no ActiveX/browser-plugin dependency.
 
-**Current application version: 0.11.3.** Linux builds are available in this project's deliverables. Windows x64 is a source-build target; its build/runtime has not been verified in the development environment. This is an independent project, not an official XMEye/Xiongmai product.
+**Current application version: 0.14.0.** Promoted from the working test branch. Linux AppImage supplied; Windows remains a source-build target and has not been verified here.
 
 > **AI code authorship:** The original OpenWatch application code, tests, build scripts and documentation were generated and revised by **OpenAI Codex**, an AI coding assistant, under the project owner's direction. The owner supplied requirements, screenshots and real-device testing feedback. Third-party libraries and the referenced protocol research were written by their respective authors, not by Codex. AI-generated code and passing simulated tests do not guarantee compatibility with every recorder.
 
-> **Important limitations:** XMEye P2P/cloud/serial-number connections are **not implemented**. NVR recording playback was attempted but **removed from the application** because it remained unreliable. Use the phone app or the recorder itself for archive playback. See [known limitations](#known-limitations) before choosing this software.
+> **Playback and cloud:** Includes local/VPN and XMEye CloudID relay live viewing, single-camera network playback, and read-only WFS disk playback. Network playback stays at 1×. File availability depends on recorder firmware; a failed or empty file search does not prove there is no footage. Direct peer-to-peer hole punching remains unimplemented.
 
 ![OpenWatch live-view workspace with device list and four video cells](images/OpenWatch_test.png)
 
@@ -33,18 +33,18 @@ Protocol and interoperability references are collected in [Sources and acknowled
 
 ### XMEye NVR/DVR over LAN or VPN
 
-1. Click **XMEye recorder**.
+1. Click **Devices → XMEye recorder**.
 2. Enter the recorder's IP, DVRIP TCP port (usually `34567`), username and password.
 3. Select substream for lower bandwidth, or main stream for full quality.
 4. Click **Scan and play all**. OpenWatch reads the reported channel capacity and opens up to 64 channels.
 
-A successful scan replaces the current grid streams and stops their recordings. Offline or unconfigured channels can still be listed because channel capacity is not the same as the number of connected cameras. For another location, establish routing through your VPN first; OpenWatch does not configure the VPN or contact XMEye cloud servers.
+A successful scan replaces the current grid streams and stops their recordings. Offline or unconfigured channels can still be listed because channel capacity is not the same as the number of connected cameras. For another location, establish routing through your VPN first; OpenWatch does not configure the VPN. The local option does not contact cloud servers; the experimental CloudID option explicitly contacts XMEye servers.
 
 ![XMEye recorder connection dialog with local network/VPN selected](images/Xmeye_connection_menu.png)
 
 ### Discover an ONVIF camera
 
-1. Click **Discover devices → Scan LAN**. Choose a network interface if necessary.
+1. Click **Devices → Discover devices → Scan LAN**. Choose a network interface if necessary.
 2. Select the camera, enter its credentials and click **Load channels / profiles**.
 3. Select the profiles and click **Open selected streams**.
 
@@ -88,17 +88,15 @@ There is no telemetry implementation. Legacy DVRIP transport itself is not encry
 
 ## Known limitations
 
-### NVR playback: removed, not supported in the current UI
+### Recorder playback and file availability
 
-Versions 0.9–0.11 experimented with NVR file searches, a calendar/timeline, multi-camera archive playback, embedded timestamps and speed controls. Real testing found inconsistent recording searches: channels 2 and 3 returned no matches even though channel 2 had confirmed footage. Search-format and hourly-window retries did not resolve it on that NVR. Timing also required corrections during the experiment.
+**Playback** opens Network playback and Disk playback tabs. Network playback supports one selected camera over local/VPN or CloudID relay connections, at normal speed. The owner has verified playback after the channel-selection correction. **Find recordings** highlights file ranges returned for the selected date and camera. Firmware can reject file searches or return incomplete lists; manual time playback remains available. An empty timeline does not prove there is no footage. Network calendar date indexing and synchronized multi-camera playback are not implemented.
 
-At the owner's request, **v0.11.3 removed the NVR recordings button and excluded the playback dialog from the application build**. Experimental archive code and synthetic tests remain in the source for reference; their presence is not a claim of working NVR playback. Encrypted proprietary XMEye exports are not supported. The earlier **Open footage** action is also absent. Use the NVR or phone app to review recordings.
+Disk playback reads supported WFS recorder disks or extracted libraries without modifying their contents. It is a reverse-engineered reader, not a general filesystem repair tool. Encrypted proprietary exports remain unsupported.
 
-### XMEye P2P/cloud: not implemented
+### XMEye cloud interoperability
 
-Serial-number/UID login, cloud rendezvous, NAT traversal and relay transport are not implemented. There is no automatic cloud fallback. Local DVRIP login is a different connection path.
-
-The examined XM public documentation includes SDK/API material and cloud alarm callbacks, but it did not provide a complete reusable transport for this implementation. A cloud-login function declaration alone was insufficient. See [P2P investigation](docs/xmeye-p2p.md) and its [sources](docs/sources.md#cloud-research-not-an-implemented-feature). Do not interpret this as proof that third-party P2P implementations cannot exist.
+CloudID lookup, rendezvous, relay XMIP transport, encrypted DVRIP login, live viewing and network playback are implemented. The owner has verified their recorder, but firmware and service compatibility can vary. Direct NAT hole punching and Android RPS are not implemented. There is no automatic local/VPN fallback. See [CloudID protocol notes](docs/XMEye-CloudID-P2P.md) and [playback research](docs/XMEye-remote-playback-research.md).
 
 ### Other work not implemented
 
@@ -194,3 +192,20 @@ Read the [architecture](docs/architecture.md), [manual](docs/manual.md), [protoc
 The consolidated [source list](docs/sources.md) identifies the protocol implementations, ONVIF specifications, cloud investigation material, dependencies and build references used during development. Upstream projects are interoperability references and dependencies, not evidence that OpenWatch implements all their features. No upstream DVRIP implementation files are vendored.
 
 Original OpenWatch source is distributed under the [MIT license](LICENSE). Third-party components retain their own licenses; the MIT file does not relicense Qt, FFmpeg, OpenSSL or SDL2. The development environment's FFmpeg is GPL-enabled. Review the licenses and redistribution requirements of the exact binaries you package. Screenshots were supplied by the project owner and are credited separately from third-party code.
+
+## Version 0.14.0: production promotion
+
+Use **Playback → Network playback**, choose a date and camera, then **Find recordings**. Teal timeline ranges indicate files reported by the recorder. A search also starts when playing a selected time. Changing camera, date or connection clears old ranges. Click or drag to seek; zoom the timeline for precision. Failed or partial searches are labelled and never block manual time playback. Calendar date indexing is currently a disk-playback feature only.
+
+The production executable is `openwatch`; its settings and pending recordings remain separate from `openwatch_test`. Existing encrypted device lists can be loaded manually. Old test AppImages remain available. See [release notes](docs/production-0.14.md) for the current release status; older experimental notes document development history.
+
+## Repository layout
+
+- `src/`: application, recorder protocols, playback and device controls.
+- `tests/`: automated tests and optional private-sample test tools.
+- `scripts/`: native build and production AppImage packaging.
+- `tools/`: optional read-only recorder and WFS investigation tools.
+- `docs/`: manual, architecture, protocol references and release notes.
+- `images/`: documentation screenshots.
+
+Build outputs, private captures, credentials and recordings are excluded from Git. Legacy test-release notes and packaging scripts are retained locally outside the production source.

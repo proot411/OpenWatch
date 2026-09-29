@@ -9,7 +9,7 @@ Each occupied cell owns one worker thread. Network deadlines and cancellation ke
 
 DVRIP uses a TCP session, Sofia password digest, monitor claim/start, bounded 20-byte message framing and bounded media-frame assembly. Its elementary H.264/H.265 output enters FFmpeg via custom AVIO. RTSP/RTMP/HLS and local media enter the same demux/decode path directly. Recording remuxes compressed video to MKV, beginning on a keyframe. DVRIP timing is synthesized from the reported frame rate; audio is not implemented.
 
-Device lists can be saved explicitly as passphrase-encrypted files; plaintext credentials exist only in process memory. There is no automatic startup unlock or OS keychain integration. No cloud service or telemetry is used.
+Device lists can be saved explicitly as passphrase-encrypted files; plaintext credentials exist only in process memory. There is no automatic startup unlock or OS keychain integration. No telemetry is used. The explicitly selected experimental CloudID mode contacts XMEye services; local mode does not. `xmcloud.cpp` supplies a bounded reliable UDP byte transport to the existing DVRIP client. Control and media use separate relay associations, with one authenticated DVRIP session.
 
 Future services: durable SQLite recording index and retention; scheduling/event rules; role enforcement; audio and extended PTZ;  tray and multi-monitor layout persistence. These are explicit future work, not implemented capabilities.
 

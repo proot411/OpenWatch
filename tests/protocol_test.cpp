@@ -21,6 +21,11 @@ private slots:
   for(int i=0;i<16;++i){QCOMPARE(urls[i].password(),QString("p@ss"));QCOMPARE(urls[i].port(),34568);QCOMPARE(QUrlQuery(urls[i]).queryItemValue("channel"),QString::number(i));QCOMPARE(QUrlQuery(urls[i]).queryItemValue("subtype"),QString("1"));}
   QCOMPARE(QUrlQuery(xm::channelUrls(source,1,false)[0]).queryItemValue("subtype"),QString("0"));
  }
+ void cloudChannelSelection(){
+  QUrl source("dvrip://admin:example@xmeye-cloud?cloudId=ExampleSN123&channel=0&subtype=0");
+  auto urls=xm::channelUrls(source,3,true);
+  for(int i=0;i<3;++i){QUrlQuery query(urls[i]);QCOMPARE(query.queryItemValue("cloudId"),QString("ExampleSN123"));QCOMPARE(query.queryItemValue("channel"),QString::number(i));QCOMPARE(query.queryItemValue("subtype"),QString("1"));QCOMPARE(query.allQueryItemValues("subtype").size(),1);}
+ }
  void hash(){QCOMPARE(xm::digest(""),QString("tlJwpbo6"));QCOMPARE(xm::digest("admin"),QString("6QNMIQGe"));}
  void headerVersions(){
   for(int version:{0,1}){auto h=xm::header(1,2,1001,12);h[1]=char(version);QCOMPARE(xm::payloadSize(h),12u);}

@@ -1,6 +1,7 @@
 #include "video.h"
 #include "dvrip.h"
 #include "xmrecording.h"
+#include "wfsdisk.h"
 extern "C" {
 #include <libavformat/avformat.h>
 #include <libavcodec/avcodec.h>
@@ -18,7 +19,7 @@ struct Input {
  bool archive=false; qint64 offset=0;std::map<qint64,qint64> times;
  void fetch(){pending=client.readVideo();if(archive&&!pending.isEmpty()){if(times.size()>32768)throw std::runtime_error("Archive timestamp buffer limit");times[offset]=client.timestamp();offset+=pending.size();}}
  qint64 timestamp(qint64 position){if(position<0)return -1;auto it=times.upper_bound(position);if(it==times.begin())return -1;--it;auto value=it->second;times.erase(times.begin(),it);return value;}
- explicit Input(std::atomic_bool &stop):client(stop){}
+ explicit Input(std::atomic_bool &stop,xm::cloud::Progress progress={}):client(stop,std::move(progress)){}
  static int read(void *opaque,uint8_t *out,int size) {
   auto *self=static_cast<Input*>(opaque);
   try { if(self->pending.isEmpty()) self->fetch();
@@ -52,16 +53,16 @@ Video::Result Video::runOnce(QUrl url,bool resumed) {
  AVFormatContext *format=nullptr,*output=nullptr;
  AVCodecContext *decoder=nullptr; AVIOContext *io=nullptr;
  AVPacket *packet=av_packet_alloc(); AVFrame *decoded=av_frame_alloc(),*cpu=av_frame_alloc(); SwsContext *scale=nullptr;
- AVBufferRef *device=nullptr; std::unique_ptr<Input> input;std::unique_ptr<xm::Recording> recording;
+ AVBufferRef *device=nullptr; std::unique_ptr<Input> input;std::unique_ptr<xm::Recording> recording;std::unique_ptr<wfs::Stream> disk;
  bool recordHeader=false; QString activeRecord; int64_t firstDts=AV_NOPTS_VALUE,lastDts=-1,synthetic=0; AVRational timebase{1,25};
  auto status=[&](QString message){QMutexLocker lock(&mutex);state=message;};
- auto closeRecord=[&](){if(output){if(recordHeader)av_write_trailer(output);avio_closep(&output->pb);avformat_free_context(output);output=nullptr;} recordHeader=false; activeRecord.clear();};
+ auto closeRecord=[&](){if(output){if(recordHeader)av_write_trailer(output);avio_closep(&output->pb);avformat_free_context(output);output=nullptr;} recordHeader=false; activeRecord.clear();recordOpen=false;};
  Deadline deadline{cancelled};
  try {
   status("Connecting…"); format=avformat_alloc_context(); deadline.reset(); format->interrupt_callback={Deadline::interrupt,&deadline};
   const AVInputFormat *demux=nullptr;
   if(url.scheme()=="dvrip") {
-   input=std::make_unique<Input>(cancelled); input->archive=QUrlQuery(url).hasQueryItem("archiveFile");input->client.open(url); input->fetch();
+   input=std::make_unique<Input>(cancelled,status); input->archive=QUrlQuery(url).hasQueryItem("archiveFile");input->client.open(url); input->fetch();
    int code=input->client.codec();
    if(code==2 || code==0x12) demux=av_find_input_format("h264");
    else if(code==3 || code==0x13 || code==0x43 || code==0x53) demux=av_find_input_format("hevc");
@@ -71,7 +72,13 @@ Video::Result Video::runOnce(QUrl url,bool resumed) {
    if(!io) throw std::runtime_error("Cannot allocate video input");
    format->pb=io; format->flags|=AVFMT_FLAG_CUSTOM_IO;
   }
-  if(url.isLocalFile()){
+  if(url.isLocalFile()&&QUrlQuery(url).hasQueryItem("wfsPrimary")){
+   status("Reading disk index / seeking…");disk=std::make_unique<wfs::Stream>(cancelled);disk->open(url);
+   demux=av_find_input_format(disk->codec==2?"h264":"hevc");
+   io=avio_alloc_context(static_cast<unsigned char*>(av_malloc(32768)),32768,0,disk.get(),wfs::Stream::readPacket,nullptr,nullptr);
+   if(!io)throw std::runtime_error("Cannot allocate disk reader");format->pb=io;format->flags|=AVFMT_FLAG_CUSTOM_IO;
+  }
+  if(url.isLocalFile()&&!disk){
    QFile file(url.toLocalFile());if(!file.open(QIODevice::ReadOnly))throw std::runtime_error("Cannot open recording file");
    if(xm::Recording::recognizes(file.peek(4))){recording=std::make_unique<xm::Recording>(cancelled);recording->open(url.toLocalFile());
     demux=av_find_input_format(recording->codec==2?"h264":"hevc");
@@ -81,11 +88,12 @@ Video::Result Video::runOnce(QUrl url,bool resumed) {
   }
   AVDictionary *options=nullptr; av_dict_set(&options,"rtsp_transport","tcp",0); av_dict_set(&options,"rw_timeout","5000000",0);
   av_dict_set(&options,"probesize","1048576",0); av_dict_set(&options,"analyzeduration","1500000",0);
+  if(disk)av_dict_set(&options,"framerate",QByteArray::number(disk->fps).constData(),0);
   if(recording)av_dict_set(&options,"framerate",QByteArray::number(recording->fps).constData(),0);
   auto source=url.isLocalFile()?url.toLocalFile().toUtf8():url.toEncoded();
-  int opened=avformat_open_input(&format,(input||recording)?nullptr:source.constData(),demux,&options); av_dict_free(&options);
-  if(opened<0) {if(input&&!input->error.isEmpty())throw std::runtime_error(input->error.toStdString());if(recording&&!recording->error.isEmpty())throw std::runtime_error(recording->error.toStdString());if(url.isLocalFile())throw std::runtime_error("Unrecognized recording format. Encrypted or other XM export variants are not supported yet.");if(opened==AVERROR(EACCES) || opened==AVERROR_HTTP_UNAUTHORIZED || opened==AVERROR_HTTP_FORBIDDEN)throw std::runtime_error("Video source rejected authentication");throw std::runtime_error("Cannot open video source");}
-  deadline.reset(); if(avformat_find_stream_info(format,nullptr)<0){if(recording&&!recording->error.isEmpty())throw std::runtime_error(recording->error.toStdString());throw std::runtime_error("Cannot read stream information");}
+  deadline.reset();int opened=avformat_open_input(&format,(input||recording||disk)?nullptr:source.constData(),demux,&options); av_dict_free(&options);
+  if(opened<0) {if(input&&!input->error.isEmpty())throw std::runtime_error(input->error.toStdString());if(disk&&!disk->error.isEmpty())throw std::runtime_error(disk->error.toStdString());if(recording&&!recording->error.isEmpty())throw std::runtime_error(recording->error.toStdString());if(url.isLocalFile())throw std::runtime_error("Unrecognized recording format. Encrypted or other XM export variants are not supported yet.");if(opened==AVERROR(EACCES) || opened==AVERROR_HTTP_UNAUTHORIZED || opened==AVERROR_HTTP_FORBIDDEN)throw std::runtime_error("Video source rejected authentication");throw std::runtime_error("Cannot open video source");}
+  deadline.reset(); if(avformat_find_stream_info(format,nullptr)<0){if(disk&&!disk->error.isEmpty())throw std::runtime_error(disk->error.toStdString());if(recording&&!recording->error.isEmpty())throw std::runtime_error(recording->error.toStdString());throw std::runtime_error("Cannot read stream information");}
   int stream=av_find_best_stream(format,AVMEDIA_TYPE_VIDEO,-1,-1,nullptr,0);
   if(stream<0) throw std::runtime_error("No video stream found");
   int audioStream=av_find_best_stream(format,AVMEDIA_TYPE_AUDIO,-1,-1,nullptr,0);
@@ -101,11 +109,20 @@ Video::Result Video::runOnce(QUrl url,bool resumed) {
   }
   if(avcodec_open2(decoder,codec,nullptr)<0){avcodec_free_context(&decoder);av_buffer_unref(&device);makeDecoder();backend="CPU";if(avcodec_open2(decoder,codec,nullptr)<0)throw std::runtime_error("Cannot initialize decoder");}
   status(((url.isLocalFile()||QUrlQuery(url).hasQueryItem("archiveFile"))?"Playback · ":"Live · ")+backend);
+  qint64 seekMs=disk?qMax<qint64>(0,QUrlQuery(url).queryItemValue("seekMs").toLongLong()):0;
+  if(disk&&QUrlQuery(url).hasQueryItem("wfsTime"))seekMs=qMax<qint64>(0,QUrlQuery(url).queryItemValue("wfsTime").toLongLong()-disk->firstStamp);
+  if(url.isLocalFile() && !recording && !disk){
+   bool ok=false;auto value=QUrlQuery(url).queryItemValue("seekMs").toLongLong(&ok);
+   if(ok && value>0){seekMs=value;auto target=av_rescale_q(seekMs,AVRational{1,1000},track->time_base);
+    if(av_seek_frame(format,stream,target,AVSEEK_FLAG_BACKWARD)<0)throw std::runtime_error("Cannot seek this recording");
+    avcodec_flush_buffers(decoder);
+   }
+  }
   QElapsedTimer playbackClock;playbackClock.start();int64_t firstPts=AV_NOPTS_VALUE; qint64 archiveFrames=0;
   const bool archive=input&&input->archive;
   double rate=QUrlQuery(url).queryItemValue("speed").toDouble();if(rate<0.25||rate>8)rate=1;
   std::map<qint64,qint64> packetTimes;
-  qint64 previousTime=-1;QElapsedTimer pace;pace.start();
+  qint64 previousTime=-1;QElapsedTimer pace;pace.start();QSize cloudFrameSize;QString cloudBackend;
   auto render=[&](){
    while(avcodec_receive_frame(decoder,decoded)==0){
     AVFrame *frame=decoded;
@@ -121,11 +138,19 @@ Video::Result Video::runOnce(QUrl url,bool resumed) {
     if(!decoded->hw_frames_ctx && backend!="CPU"){backend="CPU";status((output?"Recording · ":(QUrlQuery(url).hasQueryItem("archiveFile")||url.isLocalFile()?"Playback · ":"Live · "))+backend);}
     if(decoded->hw_frames_ctx){av_frame_unref(cpu);if(av_hwframe_transfer_data(cpu,decoded,0)<0)throw std::runtime_error("Hardware frame transfer failed");frame=cpu;}
     if(url.isLocalFile() && decoded->best_effort_timestamp!=AV_NOPTS_VALUE){
-     if(firstPts==AV_NOPTS_VALUE)firstPts=decoded->best_effort_timestamp;
-     auto due=int64_t((decoded->best_effort_timestamp-firstPts)*av_q2d(timebase)*1000);
+     auto position=av_rescale_q(decoded->best_effort_timestamp,timebase,AVRational{1,1000});
+     if(position<seekMs){av_frame_unref(decoded);continue;}
+     if(firstPts==AV_NOPTS_VALUE){firstPts=decoded->best_effort_timestamp;playbackClock.restart();}
+     auto due=int64_t((decoded->best_effort_timestamp-firstPts)*av_q2d(timebase)*1000/rate);
      while(!cancelled && playbackClock.elapsed()<due)QThread::msleep(5);
+     if(cancelled){av_frame_unref(decoded);return;}
+     playbackPosition=position;if(disk)frameTime=disk->firstStamp+position;
     }
     if(frame->width<1 || frame->height<1 || frame->width>8192 || frame->height>8192)throw std::runtime_error("Unsupported frame dimensions");
+    if(input && !archive && QUrlQuery(url).hasQueryItem("cloudId") && (cloudFrameSize!=QSize(frame->width,frame->height)||cloudBackend!=backend)){
+     cloudFrameSize=QSize(frame->width,frame->height);cloudBackend=backend;
+     status(QString("Live · %1 · %2×%3 · %4 requested").arg(backend).arg(frame->width).arg(frame->height).arg(QUrlQuery(url).queryItemValue("subtype")=="1"?"Substream":"Main stream"));
+    }
     QImage next(frame->width,frame->height,QImage::Format_RGB888);
     scale=sws_getCachedContext(scale,frame->width,frame->height,AVPixelFormat(frame->format),frame->width,frame->height,AV_PIX_FMT_RGB24,SWS_BILINEAR,nullptr,nullptr,nullptr);
     if(!scale || next.isNull())throw std::runtime_error("Frame allocation failed");
@@ -138,15 +163,17 @@ Video::Result Video::runOnce(QUrl url,bool resumed) {
    if(!speakers.enabled()){sound.reset();soundFailed=false;}
    else if(audioStream<0)speakers.error(input?"DVRIP audio: use this channel's RTSP stream":"This stream has no audio track");
    deadline.reset();int result=av_read_frame(format,packet);
-   if(result<0){if(input&&!input->error.isEmpty())throw std::runtime_error(input->error.toStdString());if(recording&&!recording->error.isEmpty())throw std::runtime_error(recording->error.toStdString());if(result==AVERROR_EOF){avcodec_send_packet(decoder,nullptr);render();if(url.isLocalFile()||QUrlQuery(url).hasQueryItem("archiveFile"))status("Playback complete");else throw std::runtime_error("Stream disconnected or timed out");break;}throw std::runtime_error("Stream disconnected or timed out");}
+   if(result<0){if(disk&&!disk->error.isEmpty())throw std::runtime_error(disk->error.toStdString());if(input&&!input->error.isEmpty())throw std::runtime_error(input->error.toStdString());if(disk&&!disk->error.isEmpty())throw std::runtime_error(disk->error.toStdString());if(recording&&!recording->error.isEmpty())throw std::runtime_error(recording->error.toStdString());if(result==AVERROR_EOF){avcodec_send_packet(decoder,nullptr);render();if(url.isLocalFile()||QUrlQuery(url).hasQueryItem("archiveFile"))status("Playback complete");else throw std::runtime_error("Stream disconnected or timed out");break;}throw std::runtime_error("Stream disconnected or timed out");}
    if(packet->stream_index==audioStream&&speakers.enabled()&&!soundFailed){
     try{if(!sound)sound=std::make_unique<AudioDecoder>(format->streams[audioStream]->codecpar);sound->consume(packet,speakers);}catch(const std::exception &e){speakers.error(e.what());soundFailed=true;}
    }
    if(packet->stream_index!=stream){av_packet_unref(packet);continue;}
    if(input){if(archive){if(packetTimes.size()>512)throw std::runtime_error("Archive decoder timestamp buffer limit");packetTimes[synthetic]=input->timestamp(packet->pos);}packet->pts=packet->dts=synthetic++;packet->duration=1;}
+   if(disk){auto time=disk->timestamp(packet->pos);if(time<0)throw std::runtime_error("Missing disk frame timestamp");packet->pts=packet->dts=av_rescale_q(time-disk->firstStamp,AVRational{1,1000},timebase);packet->duration=av_rescale_q(1,AVRational{1,disk->fps},timebase);}
    if(recording){packet->pts=packet->dts=av_rescale_q(synthetic++,AVRational{1,recording->fps},timebase);packet->duration=av_rescale_q(1,AVRational{1,recording->fps},timebase);}
-   QString requested;{QMutexLocker lock(&mutex);requested=recordPath;}
+   QString requested;{QMutexLocker lock(&mutex);requested=recordPath;if(!requested.isEmpty())recordBusy=true;}
    if(output && requested!=activeRecord){closeRecord();status(((url.isLocalFile()||QUrlQuery(url).hasQueryItem("archiveFile"))?"Playback · ":"Live · ")+backend);}
+   if(requested.isEmpty()&&!output)recordBusy=false;
    bool timestamped=packet->dts!=AV_NOPTS_VALUE || packet->pts!=AV_NOPTS_VALUE;
    if(!requested.isEmpty() && !output && timestamped && (packet->flags&AV_PKT_FLAG_KEY)){
     if(url.isLocalFile() && QFileInfo(requested).exists() && QFileInfo(requested).canonicalFilePath()==QFileInfo(url.toLocalFile()).canonicalFilePath())throw std::runtime_error("Recording output must not overwrite the source footage");
@@ -157,7 +184,7 @@ Video::Result Video::runOnce(QUrl url,bool resumed) {
     if(resumed){QFileInfo file(requested);target=file.dir().filePath(file.completeBaseName()+"-reconnect-"+QDateTime::currentDateTimeUtc().toString("yyyyMMdd-HHmmss-zzz")+"-"+QUuid::createUuid().toString(QUuid::Id128).left(8)+".mkv");}
     auto path=target.toUtf8();if(avio_open(&output->pb,path.constData(),AVIO_FLAG_WRITE)<0)throw std::runtime_error("Cannot write recording file");
     if(avformat_write_header(output,nullptr)<0)throw std::runtime_error("Cannot write recording header");
-    recordHeader=true;activeRecord=requested;firstDts=AV_NOPTS_VALUE;lastDts=-1;status("Recording · "+backend);
+    recordHeader=true;recordOpen=true;activeRecord=requested;firstDts=AV_NOPTS_VALUE;lastDts=-1;status("Recording · "+backend);
    }
    if(output && timestamped){
     AVPacket *copy=av_packet_clone(packet);if(!copy)throw std::runtime_error("Packet allocation failed");
@@ -173,11 +200,11 @@ Video::Result Video::runOnce(QUrl url,bool resumed) {
   }
  } catch(const std::exception &error){
   outcome.error=QString::fromUtf8(error.what());
-  const QStringList transient={"Cannot connect to DVRIP device","DVRIP disconnected","DVRIP read cancelled or timed out","DVRIP write failed","DVRIP write timed out","Cannot open video source","Cannot read stream information","Stream disconnected or timed out","Video decode failed"};
+  const QStringList transient={"Cannot connect to DVRIP device","DVRIP disconnected","DVRIP read cancelled or timed out","DVRIP write failed","DVRIP write timed out","Cannot open video source","Cannot read stream information","Stream disconnected or timed out","Video decode failed","Cloud stream timed out","Cloud UDP send failed","Relay did not acknowledge data; connection lost","Cloud server did not respond at the current connection stage","Recorder rendezvous timed out (offline or unsupported cloud service)","Relay association timed out"};
   outcome.retry=!url.isLocalFile() && transient.contains(outcome.error);
   if(!cancelled)status(outcome.error);
  }
- speakers.clear();sound.reset();closeRecord();av_packet_free(&packet);av_frame_free(&decoded);av_frame_free(&cpu);sws_freeContext(scale);avcodec_free_context(&decoder);av_buffer_unref(&device);
+ speakers.clear();sound.reset();closeRecord();recordBusy=false;av_packet_free(&packet);av_frame_free(&decoded);av_frame_free(&cpu);sws_freeContext(scale);avcodec_free_context(&decoder);av_buffer_unref(&device);
  avformat_close_input(&format);if(io){av_freep(&io->buffer);avio_context_free(&io);}if(cancelled)status("Stopped");
  return outcome;
 }

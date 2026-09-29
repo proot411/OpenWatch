@@ -4,6 +4,17 @@
 #include <vector>
 int main(int argc,char **argv){
  QCoreApplication app(argc,argv);if(argc!=3 && argc!=4)return 2;
+ if(argc==4&&QString::fromLocal8Bit(argv[2])=="--record-toggle"){
+  Video video;video.start(QUrl::fromLocalFile(QString::fromLocal8Bit(argv[1])));QElapsedTimer timer;timer.start();
+  while(video.frame().isNull()&&timer.elapsed()<4000)QThread::msleep(10);if(video.frame().isNull())return 20;
+  for(int i=0;i<2;++i){auto path=QString::fromLocal8Bit(argv[3])+QString("/clip%1.mkv").arg(i);video.record(path);timer.restart();
+   while(!video.isRecording()&&timer.elapsed()<3000)QThread::msleep(10);if(!video.isRecording())return 21;
+   QThread::msleep(700);video.record({});timer.restart();while(!video.recordingFinished()&&timer.elapsed()<3000)QThread::msleep(10);
+   if(!video.recordingFinished()||video.isRecording()||QFileInfo(path).size()<1000)return 22;
+   auto position=video.playbackMilliseconds();QThread::msleep(150);if(video.playbackMilliseconds()<=position)return 23;
+  }
+  video.stop();return 0;
+ }
  if(QString::fromLocal8Bit(argv[2])=="--archive-query"){
   std::atomic_bool cancel{false};xm::Client client(cancel);
   try{auto files=client.recordings(QUrl(QString::fromLocal8Bit(argv[1])),2,"2026-09-10 00:00:00","2026-09-10 23:59:59");return files.size()==1&&files[0].toObject()["FileName"].toString()=="/disk/003/test[R][0].h264"?0:11;}catch(const std::exception &e){qWarning()<<e.what();return 12;}

@@ -10,8 +10,9 @@ public:
   QPainter p(this);p.fillRect(rect(),QColor("#111a25"));auto frame=video.frame();
   if(!frame.isNull()) {QRectF view(0,0,width(),qMax(1,height()-32));p.setClipRect(view);p.drawImage(digitalzoom::imageRect(frame.size(),view,zoom,zoomPan),frame);p.setClipping(false);}
   else {p.setPen(QColor("#56677b"));p.drawText(rect(),Qt::AlignCenter,name.isEmpty()?"＋\nDrop a camera here":"Waiting for video…");}
-  p.fillRect(0,height()-32,width(),32,QColor("#172231"));p.setPen(QColor("#adbed0"));p.drawText(QRect(12,height()-32,width()-24,32),Qt::AlignVCenter,(name.isEmpty()?"Empty channel":name)+"   ·   "+video.status());
-  p.setPen(QPen(QColor(selected?"#38d8b2":"#263447"),selected?2:1));p.drawRect(rect().adjusted(1,1,-1,-1));
+  p.fillRect(0,height()-32,width(),32,QColor("#172231"));p.setPen(QColor("#adbed0"));p.drawText(QRect(12,height()-32,width()-24,32),Qt::AlignVCenter,(name.isEmpty()?"Empty channel":name)+"   ·   "+QString(video.status()).replace("Recording · ","Live · "));
+  bool recording=video.isRecording();bool flash=(QDateTime::currentMSecsSinceEpoch()/500)%2==0;
+  if(recording)p.setPen(QPen(QColor(flash?"#ff394f":"#8c2031"),4));else p.setPen(QPen(QColor(selected?"#38d8b2":"#263447"),selected?2:1));p.drawRect(rect().adjusted(1,1,-1,-1));
  }
  void mousePressEvent(QMouseEvent*)override{if(select)select(this);}
  void mouseDoubleClickEvent(QMouseEvent*)override{if(activate)activate(this);}

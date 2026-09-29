@@ -87,3 +87,18 @@ Removed the NVR recordings action and excluded ArchiveDialog from the applicatio
 ## Documentation and native build script (2026-09-21)
 
 Replaced the README with illustrated current-state documentation, explicit Codex authorship, playback/P2P limitations and a consolidated source list. Six supplied screenshots were copied unchanged into the source tree; relative image/document links and coverage of previously recorded protocol/cloud reference links were checked. The shared native build script passed Bash syntax and invalid-option checks, then completed Linux Release configuration/build, all eleven CTest suites, offscreen startup and TGZ packaging using the existing build tree. CI YAML parses and now invokes the shared script. Windows UCRT64 instructions/tool names were checked against official documentation, but no Windows build/runtime or remote GitHub Actions run was performed. The application remains v0.11.3.
+
+
+## 2026-09-28: Cloud2 video-payload regression
+
+Corrected XMIP XOR processing to reset for every data-slice payload, on receive and transmit. The Cloud1 per-message implementation reconstructed DVRIP headers but damaged video; the updated private-capture test reconstructs 829 messages / 777 media packets and parses 735 video frames. FFmpeg decoded the exported elementary stream with `-xerror` and no errors. The cloud protocol suite passed all nine cases after local UDP socket permission was granted, including fragmented requests/responses, loss, reordering, encrypted login and rejected credentials. Actual live recorder video still requires user confirmation.
+
+
+## 2026-09-28: Cloud3 connection maintenance
+
+Owner confirmed Cloud2 remote video works, with intermittent disconnects and a channel 2 resolution discrepancy. Cloud3 services both control/media relay associations and checks heartbeat timing even for reads already buffered. Protocol and cloud tests passed, including periodic heartbeat assertions during buffered reads and idle service. Channel URL tests verify cloud identity and substream selection survive multi-channel expansion. This does not establish long-duration live reliability or resolve the firmware’s channel 2 stream response. Tiles now expose actual dimensions alongside the requested stream type. Remote playback SDK findings are documented separately and are not enabled in the player.
+
+
+## 2026-09-29: Playback1 local and cloud implementation
+
+Local NVR archive integration passed six H.264/H.265 and speed combinations, including the new ByTime filename selector and separate media/control connections, decoded timestamps, EOF and Stop. The ten-case cloud suite passed, including encrypted login, loss/reordering, heartbeat service and new playback claim/start/media/Stop across two independent relay associations. The new simulated recorder parser was corrected to strip DVRIP JSON terminators. The main application and new playback dialog passed an offscreen startup/shutdown check. No real-recorder playback request was sent during this validation; compatibility and seek behavior require the owner’s test.

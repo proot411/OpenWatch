@@ -13,6 +13,7 @@ class Video {
  QImage image;
  qint64 shownTimestamp=-1;
  QString state="Ready", recordPath;
+ std::atomic_bool recordBusy{false}, recordOpen{false};
  struct Result {bool retry=false;QString error;};
  Result runOnce(QUrl url, bool resumed);
  void run(QUrl url);
@@ -30,5 +31,8 @@ public:
  QPair<QImage,qint64> archiveFrame(){QMutexLocker lock(&mutex);return {image,shownTimestamp};}
  QImage frame(){QMutexLocker lock(&mutex);return image;}
  QString status(){QMutexLocker lock(&mutex);return state;}
+ bool recordingRequested(){QMutexLocker lock(&mutex);return !recordPath.isEmpty();}
+ bool isRecording()const{return recordOpen.load();}
+ bool recordingFinished(){QMutexLocker lock(&mutex);return recordPath.isEmpty()&&!recordBusy.load();}
  void record(const QString &path){QMutexLocker lock(&mutex);recordPath=path;}
 };

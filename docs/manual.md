@@ -1,6 +1,10 @@
+# Current release: 0.14.0
+
+See [production release notes](production-0.14.md) for current behavior. Older version sections below are historical. Use **Find recordings** in Network playback to highlight recorder-reported footage in teal. Searches also start on playback; date/camera changes clear old coverage. Network playback stays at normal speed.
+
 # User manual
 
-For an entire XMEye NVR/DVR, click **XMEye recorder** in the sidebar. Enter its IP, port, username and password, select Substream or Main stream, and press **Scan and play all**. A successful scan replaces the current grid, automatically chooses its size and starts every advertised channel, up to 64. Failed scans leave the current grid untouched. Cancel stops the scan. Serial-number cloud access is disabled for this local-first release. Empty recorder inputs may show errors; channel enumeration does not detect whether a camera is physically present.
+For an entire XMEye NVR/DVR, click **XMEye recorder** in the sidebar. Enter its IP, port, username and password, select Substream or Main stream, and press **Scan and play all**. A successful scan replaces the current grid, automatically chooses its size and starts every advertised channel, up to 64. Failed scans leave the current grid untouched. Cancel stops the scan. Choose **XMEye cloud / serial number — experimental relay** to test remote access. Enter the recorder serial and device credentials, start with **Channel 1** and **Substream**, then press **Connect through cloud**. The status reports lookup, rendezvous, relay and login stages. This mode contacts XMEye servers and never silently falls back to a local/VPN IP. Cloud audio is unsupported; video playback is available through Playback → Network playback. Empty recorder inputs may show errors; channel enumeration does not detect whether a camera is physically present.
 
 1. Choose **Add device**. Give the camera a descriptive name and enter its stream URL. Supply credentials in the separate fields. Use Save devices to retain it in a passphrase-encrypted file.
 2. For XM, use `dvrip://192.168.1.10:34567?channel=0&subtype=0`. Channels are zero-based; subtype 0 is Main, 1 is Extra1. The default username when omitted is admin, with an empty password. Supply your actual device credentials.
@@ -73,3 +77,49 @@ This release does not capture microphone audio, implement two-way talk, add audi
 The experimental NVR playback workspace has been removed from the application at the user's request because recording searches remained unreliable on their NVR. Use the NVR's own playback interface or phone app to review stored footage. Live viewing, camera controls, live RTSP audio, snapshots and manual recording remain available.
 
 The experimental archive source and tests are retained for reference, but the playback dialog is not built into the application or accessible through its interface.
+
+
+### Recorder reports code 205
+
+Code 205 is a recorder-side login lockout. Public DVRIP mappings differ between “IP locked” and “user locked”; OpenWatch does not infer which applies to a particular firmware. Correct credentials can be refused while locked. Stop login attempts from OpenWatch and other clients using the same credentials, allow the recorder’s configured lockout interval to expire, and inspect its login/security log through an already authorized session if available. No fixed timeout is assumed. OpenWatch does not automatically retry a 205 rejection, change the password or disable recorder protection.
+
+Source: [OpenIPC DVRIP response mapping](https://github.com/OpenIPC/python-dvr/blob/master/dvrip.py).
+
+
+### Experimental NVR playback (local or XMEye cloud)
+
+Select an XMEye/DVRIP device in the device list, then choose **Playback → Network playback**. Its connection details are copied into the dialog. Alternatively enter a local/VPN recorder IP and port, or select XMEye cloud and enter its serial number and device credentials.
+
+Choose the recorder’s local calendar date, camera number (1 is the first camera), start time and a short duration. Start with one camera and five minutes known to contain footage. **Play selected time** issues a direct ByTime playback request; it does not require a successful recording-list search. The timeline represents the requested interval, not verified recording coverage. Dates are not marked as having recordings. The displayed footage time comes from the received stream.
+
+Drag/release the slider or use Left/Right for ten-second seeks. Space or Pause/Resume closes and reopens the playback session at the displayed time; it is not a server-side pause command. Seeks reopen at the requested time and may land on a nearby keyframe. A received timestamp outside the requested interval remains visible honestly. A new date, camera, connection or duration applies when **Play selected time** is pressed.
+
+This first test UI plays one camera, video only, at normal speed. Cloud delivery depends on upstream bandwidth and relay availability. Prefer stopping other cloud views while testing to reduce session load. There is no automatic login retry on playback errors. Neither an empty interval nor an unsupported request implies a wrong password. Code 205 still means login lockout. No camera settings, HDD sectors or recordings are modified.
+
+### Experimental navigation update (UI1)
+
+Use **NVR playback** in the left sidebar to open local/VPN or XMEye cloud playback. Select a recorder heading or one of its channels first to prefill its connection. **Recorder disk playback** opens the separate disk/library reader.
+
+The **☰** button hides or restores the sidebar. Recorder headings expand to show their channels; ONVIF and manually added streams share their own expandable section. Double-click a camera to connect, or drag a channel into a video cell. Select a camera leaf to edit or remove it. Removing a list entry does not delete recordings.
+
+Use **Devices ▾** for discovery, adding recorders or streams, assigning custom groups, and saving/loading encrypted device lists. Search and the custom-group filter narrow the tree. Use **Camera actions ▾** for PTZ controls, snapshots, recording, zoom reset and disconnect. Audio and volume remain below the camera list. Arrow keys navigate the tree while it has focus; click a video view to use channel navigation again.
+
+This UI update does not change the experimental playback or cloud protocols. Real-recorder playback still needs verification on the target firmware.
+
+### Experimental workspace update (UI2)
+
+**Devices** is above **Playback**. Playback opens one window with **Network playback** and **Disk playback** tabs; switching tabs stops the previous stream. Select a recorder heading and click **Remove** to remove that recorder's channels. Selecting **ONVIF / manual streams** and clicking **Remove** removes every standalone stream in that section, including entries hidden by a filter. Existing saved device vaults and footage are not deleted.
+
+**Camera controls**, **Reset zoom**, **Record / Stop recording**, and **Snapshot** are directly accessible. Less frequent actions are under **Others**.
+
+Click **Record** on a playing cell to start. Its border blinks red when the recording output opens. Select another cell to record it independently. Click **Stop recording** to finalize the clip, then choose where to save it. If the connection interrupted the recording, save its segments into a folder. Cancelled or failed saves retain clips under **Others → Unsaved recordings**. Pending clips are stored in the application's local data folder; they consume disk space until saved or manually removed. Closing the app stops active recordings and offers to save them. Recording currently captures video only.
+
+### Network playback speed and layout (UI3)
+
+The network tab places video on the left and the camera/calendar selection on the right. Connection settings fold away when playback begins. Use the speed selector below the picture for **0.25×, 0.5×, 1×, 2×, 4× or 8×**; `[` slows down and `]` speeds up when focus is outside input fields. Changing speed while playing reopens footage at the current displayed time; while paused, the new speed applies on resume. The recorder can resume at a nearby keyframe. Rates above 1× use the existing download-style playback path; achieved speed depends on firmware, delivery and decoding. The scrubber covers the selected time range and does not imply footage exists throughout it. Disk playback retains its speed selector.
+
+### Network playback correction (UI4)
+
+UI4 supersedes the UI3 network speed controls. Network requests always use **1×**, including when a source URL contains an older speed value. Network speed selectors and their bracket-key shortcuts have been removed. Disk playback keeps its existing local speed controls.
+
+The network page now follows the disk page's layout: video and status on the left, calendar/camera/time selection on the right, transport controls below, a day timeline, a **Go** time field, and 24-hour / 2-hour / 1-hour / 30-minute timeline zoom. Click or drag the day timeline to request that time on the selected date and camera. The |◀ / ▶| buttons move by the selected request duration; they do not claim to locate previous/next recording files. Left/right seek 10 seconds; Shift+left/right seek one minute. Use **Find recordings** to show recorder-reported file ranges in teal. Network calendar date highlights are unavailable; an empty timeline does not prove there is no footage.

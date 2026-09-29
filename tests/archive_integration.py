@@ -14,6 +14,9 @@ def read(conn):
     h = exact(conn, 20)
     size = struct.unpack_from('<I', h, 16)[0]
     assert size < 8192
+    command=struct.unpack_from('<H',h,14)[0]
+    channel=struct.unpack_from('<H',h,12)[0]
+    assert channel == (2 if command==1420 else 0), (command,channel)
     return struct.unpack_from('<H', h, 14)[0], struct.unpack_from('<I', h, 4)[0], json.loads(exact(conn,size).rstrip(b'\0\n'))
 
 def send(conn, command, payload):
@@ -48,7 +51,7 @@ with tempfile.TemporaryDirectory() as temp:
                     with listener.accept()[0] as data:
                         data.settimeout(10)
                         cmd,sid,body=read(data);assert cmd==1424 and sid==0x1234
-                        p=body['OPPlayBack'];assert p['Action']=='Claim' and p['Parameter']['PlayMode']=='ByName' and p['Parameter']['FileName']==name and p['Parameter']['Channel']==2 and p['StartTime']=='2026-09-10 12:00:01'
+                        p=body['OPPlayBack'];assert p['Action']=='Claim' and p['Parameter']['PlayMode']==('ByTime' if rate==1 else 'ByName') and p['Parameter']['FileName']==('02_2026-09-10 12:00:01' if rate==1 else name) and 'Channel' not in p['Parameter'] and p['StartTime']=='2026-09-10 12:00:01'
                         reply(data,1425)
                         cmd,sid,body=read(control);assert cmd==1420 and sid==0x1234 and body['OPPlayBack']['Action']==('DownloadStart' if rate>1 else 'Start');reply(control,1421)
                         groups=[]
@@ -67,7 +70,7 @@ with tempfile.TemporaryDirectory() as temp:
             except Exception as e: errors.append(repr(e))
         thread=threading.Thread(target=serve);thread.start()
         subprocess.run([sys.argv[1],url,'--archive-query'],check=True,timeout=15)
-        query=urlencode(dict(speed=rate,channel=2,archiveFile=name,begin='2026-09-10 12:00:01',end='2026-09-10 12:00:02'),quote_via=quote)
+        query=urlencode(dict(speed=rate,channel=2,playMode=('ByTime' if rate==1 else 'ByName'),archiveFile=name,begin='2026-09-10 12:00:01',end='2026-09-10 12:00:02'),quote_via=quote)
         started=time.monotonic()
         subprocess.run([sys.argv[1],url+'?'+query,'--archive-play'],check=True,timeout=15)
         elapsed=time.monotonic()-started

@@ -1,6 +1,6 @@
 # XMEye cloud connection investigation
 
-Status: research blocked on a successful client connection capture or a usable vendor SDK package. No cloud transport is implemented, and the app's cloud option remains unavailable. A serial number must not be treated as a DNS name or an IP address.
+Historical investigation notes. As of 2026-09-28, the owner supplied a successful Windows VMS capture and matching SDK symbols. OpenWatch now contains an experimental relay transport and encrypted login implementation. See [the current CloudID notes](XMEye-CloudID-P2P.md) for evidence and verification limits. This functionality was promoted into OpenWatch 0.14.0. A serial number is never treated as a DNS name or IP address.
 
 ## Target and confirmed observations
 

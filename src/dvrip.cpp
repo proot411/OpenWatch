@@ -19,7 +19,7 @@ int channelCount(const QJsonObject &login, const QJsonObject &system) {
 QVector<QUrl> channelUrls(const QUrl &recorder,int count,bool substream) {
  if(count<1 || count>256) throw std::runtime_error("Invalid recorder channel count");
  QVector<QUrl> urls;
- for(int i=0;i<count;++i) {QUrl url=recorder;QUrlQuery query;query.addQueryItem("channel",QString::number(i));query.addQueryItem("subtype",substream?"1":"0");url.setQuery(query);urls.append(url);}
+ for(int i=0;i<count;++i) {QUrl url=recorder;QUrlQuery query(url);query.removeAllQueryItems("channel");query.removeAllQueryItems("subtype");query.addQueryItem("channel",QString::number(i));query.addQueryItem("subtype",substream?"1":"0");url.setQuery(query);urls.append(url);}
  return urls;
 }
 QString digest(const QString &password) {
@@ -29,11 +29,11 @@ QString digest(const QString &password) {
  for(int i=0;i<16;i+=2) result+=alphabet[(quint8(hash[i])+quint8(hash[i+1]))%62];
  return result;
 }
-QByteArray header(quint32 session, quint32 sequence, quint16 command, quint32 size) {
+QByteArray header(quint32 session, quint32 sequence, quint16 command, quint32 size, quint16 channel) {
  if(size>MaxPayload) throw std::runtime_error("DVRIP payload too large");
  QByteArray b(20,0); b[0]=char(255);
  qToLittleEndian(session,b.data()+4); qToLittleEndian(sequence,b.data()+8);
- qToLittleEndian(command,b.data()+14); qToLittleEndian(size,b.data()+16); return b;
+ qToLittleEndian(channel,b.data()+12); qToLittleEndian(command,b.data()+14); qToLittleEndian(size,b.data()+16); return b;
 }
 quint32 payloadSize(const QByteArray &b) {
  if(b.size()!=20) throw std::runtime_error("Incomplete DVRIP header (expected 20 bytes)");
@@ -73,6 +73,7 @@ QByteArray MediaParser::take() {
  return {};
 }
 QByteArray Client::exact(qint64 size) {
+ if(remote)return remote->read(size,[this]{if(liveControl&&liveControl->remote)liveControl->remote->service();if(archiveControl&&archiveControl->remote)archiveControl->remote->service();});
  QByteArray result; QElapsedTimer timer; timer.start();
  while(result.size()<size) {
   if(stop || timer.elapsed()>5000) throw std::runtime_error("DVRIP read cancelled or timed out");
@@ -82,22 +83,44 @@ QByteArray Client::exact(qint64 size) {
  return result;
 }
 QByteArray Client::chunk() { auto h=exact(20); auto size=payloadSize(h); session=qFromLittleEndian<quint32>(h.constData()+4); messageId=qFromLittleEndian<quint16>(h.constData()+14); return exact(size); }
-void Client::send(quint16 command,QJsonObject body) {
- auto payload=QJsonDocument(body).toJson(QJsonDocument::Compact)+QByteArray("\n\0",2);
- auto bytes=header(session,sequence++,command,payload.size())+payload;
+void Client::write(const QByteArray &bytes) {
+ if(remote){remote->write(bytes);return;}
  if(socket.write(bytes)!=bytes.size()) throw std::runtime_error("DVRIP write failed");
  QElapsedTimer deadline; deadline.start();
  while(socket.bytesToWrite()) { if(stop || deadline.elapsed()>5000) throw std::runtime_error("DVRIP write timed out"); socket.waitForBytesWritten(100); }
 }
+void Client::send(quint16 command,QJsonObject body) {
+ auto payload=QJsonDocument(body).toJson(QJsonDocument::Compact)+QByteArray("\n\0",2);
+ if(remote&&!sessionKey.isEmpty()&&!unencrypted.contains(command))payload=cloud::aesEncode(payload,sessionKey)+QByteArray(1,0);
+ write(header(session,sequence++,command,payload.size(),command==1420?playbackChannel:0)+payload);
+}
+void Client::connectCloud(const QUrl &url){QUrlQuery q(url);remote=std::make_unique<cloud::Transport>(stop,progress);remote->open(q.queryItemValue("cloudId"),q.hasQueryItem("bootstrap")?q.queryItemValue("bootstrap"):"159.138.1.83");}
 QJsonObject Client::response(bool fileSearch) {
- auto bytes=chunk(); while(bytes.endsWith('\0') || bytes.endsWith('\n')) bytes.chop(1);
+ auto bytes=chunk(); if(remote&&!sessionKey.isEmpty()&&!unencrypted.contains(messageId)&&!bytes.trimmed().startsWith('{'))bytes=cloud::aesDecode(bytes,sessionKey); while(bytes.endsWith('\0') || bytes.endsWith('\n')) bytes.chop(1);
  QJsonParseError error; auto doc=QJsonDocument::fromJson(bytes,&error);
  if(error.error!=QJsonParseError::NoError || !doc.isObject()) throw std::runtime_error("Invalid DVRIP JSON response");
  int ret=doc.object().value("Ret").toInt();
+ if(ret==205)throw std::runtime_error("Recorder login locked (code 205). The recorder may have locked this account or source IP. Stop retrying and wait for its lockout to expire, or check its security/login log through an existing authorized session. Correct credentials can still be refused while locked.");
  if(ret!=100 && ret!=515 && !(fileSearch && messageId==1441 && ret==119)) throw std::runtime_error(QString("DVRIP request rejected (code %1; check permissions, channel and firmware support)").arg(ret).toStdString());
  return doc.object();
 }
 QJsonObject Client::login(const QUrl &url) {
+ if(QUrlQuery(url).hasQueryItem("cloudId")){
+  connectCloud(url);
+  QJsonObject claim{{"Name","OPMonitor"},{"SessionID","0x1"},{"OPMonitor",QJsonObject{{"Action","Claim"},{"Parameter",QJsonObject{{"Channel",0},{"CombinMode","CONNECT_ALL"},{"StreamType","Main"},{"TransMode","TCP"}}}}}};
+  auto payload=QJsonDocument(claim).toJson(QJsonDocument::Compact)+"\n";auto h=header(99999,0,1413,payload.size());h[12]=99;write(h+payload);
+  auto raw=chunk();if(messageId!=1414)throw std::runtime_error("Unexpected cloud authentication capability response");
+  if(!raw.trimmed().startsWith('{'))raw=cloud::aesDecode(raw,cloud::wrapperKey());while(raw.endsWith('\0'))raw.chop(1);
+  auto cap=QJsonDocument::fromJson(raw).object();if(cap.value("Ret").toInt()!=100||!cap.value("LoginEncryptionType").toObject().value("RSA").toBool()||cap.value("EncryptAlgo").toString()!="RSA_V1.5")throw std::runtime_error("Recorder's cloud login encryption is not supported by this prototype");
+  if(!cap.value("DataEncryptionType").toObject().value("AES").toBool())throw std::runtime_error("Recorder does not advertise the supported cloud AES mode");
+  for(auto value:cap.value("NotEncryptMsgID").toArray()){bool ok=false;int n=value.isDouble()?value.toInt():value.toString().toInt(&ok,0);if(value.isDouble()||ok)unencrypted.insert(n);}
+  if(!unencrypted.contains(1001)||!unencrypted.contains(1412)||!unencrypted.contains(1413)||!unencrypted.contains(1414))throw std::runtime_error("Unsupported cloud command encryption policy");
+  sessionKey=cloud::loginKey();auto pub=cap.value("PublicKey").toString();
+  QJsonObject credentials{{"EncryptType","MD5"},{"LoginType","DVRIP-Web"},{"UserName",QString::fromLatin1(cloud::rsaEncode((url.userName().isEmpty()?QString("admin"):url.userName()).toUtf8(),pub))},{"PassWord",QString::fromLatin1(cloud::rsaEncode(digest(url.password()).toLatin1(),pub))},{"CommunicateKey",QString::fromLatin1(cloud::rsaEncode(sessionKey,pub))}};
+  payload=cloud::aesEncode(QJsonDocument(credentials).toJson(QJsonDocument::Compact),cloud::wrapperKey(),true)+"#";session=0;sequence=0;h=header(0,sequence++,1000,payload.size());h[12]=99;write(h+payload);auto result=response();
+  if(result.value("DataUseAES").toBool())throw std::runtime_error("Encrypted cloud video is not supported by this prototype");
+  if(progress)progress("Cloud login successful; reading recorder channels…");return result;
+ }
  socket.connectToHost(url.host(),url.port(34567));
  if(!socket.waitForConnected(3000)) throw std::runtime_error("Cannot connect to DVRIP device");
  send(1000,{{"EncryptType","MD5"},{"LoginType","DVRIP-Web"},{"UserName",url.userName().isEmpty()?"admin":url.userName()},{"PassWord",digest(url.password())}}); return response();
@@ -126,7 +149,10 @@ Client::~Client() {
  if(archiveControl && !archiveRequest.isEmpty()) {
   auto body=archiveRequest;body["Action"]=download?"DownloadStop":"Stop";
   auto payload=QJsonDocument(QJsonObject{{"Name","OPPlayBack"},{"SessionID",QString("0x%1").arg(archiveControl->session,8,16,QChar('0'))},{"OPPlayBack",body}}).toJson(QJsonDocument::Compact)+QByteArray("\n\0",2);
-  archiveControl->socket.write(header(archiveControl->session,archiveControl->sequence++,1420,payload.size())+payload);
+  if(archiveControl->remote){
+   if(!archiveControl->sessionKey.isEmpty()&&!archiveControl->unencrypted.contains(1420))payload=cloud::aesEncode(payload,archiveControl->sessionKey)+QByteArray(1,0);
+   archiveControl->remote->writeClosing(header(archiveControl->session,archiveControl->sequence++,1420,payload.size(),archiveControl->playbackChannel)+payload);
+  }else archiveControl->socket.write(header(archiveControl->session,archiveControl->sequence++,1420,payload.size(),archiveControl->playbackChannel)+payload);
   archiveControl->socket.flush(); // Do not wait on a cancelled session.
  }
 }
@@ -164,27 +190,33 @@ QJsonArray Client::recordings(const QUrl &url,int channel,const QString &begin,c
 void Client::open(const QUrl &url) {
  QUrlQuery archiveQuery(url);
  if(archiveQuery.hasQueryItem("archiveFile")) {
-  download=archiveQuery.queryItemValue("speed").toDouble()>1;archive=true;archiveControl=std::make_unique<Client>(stop);archiveControl->login(url);session=archiveControl->session;
-  socket.connectToHost(url.host(),url.port(34567));
-  if(!socket.waitForConnected(3000))throw std::runtime_error("Cannot connect to DVRIP archive data socket");
+  const auto begin=archiveQuery.queryItemValue("begin",QUrl::FullyDecoded),end=archiveQuery.queryItemValue("end",QUrl::FullyDecoded);
+  const auto from=QDateTime::fromString(begin,"yyyy-MM-dd HH:mm:ss"),until=QDateTime::fromString(end,"yyyy-MM-dd HH:mm:ss");
+  bool ok=false;int ch=archiveQuery.queryItemValue("channel").toInt(&ok);
+  if(!ok||ch<0||ch>255||!from.isValid()||!until.isValid()||begin>=end)throw std::runtime_error("Invalid recorder playback channel or time range");
+  const bool byTime=archiveQuery.queryItemValue("playMode")=="ByTime";
+  const QString file=byTime?QString("%1_%2").arg(ch,2,10,QChar('0')).arg(begin):archiveQuery.queryItemValue("archiveFile",QUrl::FullyDecoded);
+  download=archiveQuery.queryItemValue("speed").toDouble()>1;archive=true;archiveControl=std::make_unique<Client>(stop,progress);archiveControl->login(url);archiveControl->playbackChannel=quint16(ch);session=archiveControl->session;
+  if(archiveQuery.hasQueryItem("cloudId"))connectCloud(url);
+  else {socket.connectToHost(url.host(),url.port(34567));if(!socket.waitForConnected(3000))throw std::runtime_error("Cannot connect to DVRIP archive data socket");}
   archiveRequest={{"Action","Claim"},{"StartTime",archiveQuery.queryItemValue("begin",QUrl::FullyDecoded)},{"EndTime",archiveQuery.queryItemValue("end",QUrl::FullyDecoded)},
-   {"Parameter",QJsonObject{{"PlayMode","ByName"},{"FileName",archiveQuery.queryItemValue("archiveFile",QUrl::FullyDecoded)},{"Channel",archiveQuery.queryItemValue("channel").toInt()},{"StreamType",0},{"Value",0},{"TransMode","TCP"}}}};
+   {"Parameter",QJsonObject{{"PlayMode",byTime?"ByTime":"ByName"},{"FileName",file},{"StreamType",0},{"Value",0},{"TransMode","TCP"}}}};
   control(1424,"OPPlayBack",archiveRequest);
   auto start=archiveRequest;start["Action"]=download?"DownloadStart":"Start";archiveControl->control(1420,"OPPlayBack",start);heartbeat.start();return;
  }
- login(url);
+ if(QUrlQuery(url).hasQueryItem("cloudId")){liveControl=std::make_unique<Client>(stop,progress);liveControl->login(url);connectCloud(url);session=liveControl->session;}else login(url);
  QUrlQuery query(url); bool ok=false; auto value=query.queryItemValue("channel"); int channel=value.isEmpty()?0:value.toInt(&ok);
  if(!value.isEmpty() && (!ok || channel<0 || channel>255)) throw std::runtime_error("Channel must be 0–255");
  QJsonObject parameters{{"Channel",channel},{"CombinMode","NONE"},{"StreamType",query.queryItemValue("subtype")=="1"?"Extra1":"Main"},{"TransMode","TCP"}};
  auto sid=QString("0x%1").arg(session,8,16,QChar('0'));
  auto command=[&](QString action){return QJsonObject{{"Name","OPMonitor"},{"SessionID",sid},{"OPMonitor",QJsonObject{{"Action",action},{"Parameter",parameters}}}};};
- send(1413,command("Claim")); response(); send(1410,command("Start")); heartbeat.start();
+ send(1413,command("Claim")); response(); if(liveControl){liveControl->send(1410,command("Start"));liveControl->response();}else send(1410,command("Start")); heartbeat.start();
 }
-void Client::keepArchiveAlive(){if(archiveControl&&heartbeat.elapsed()>10000){archiveControl->control(1006,"KeepAlive");heartbeat.restart();}}
+void Client::keepArchiveAlive(){if(archiveControl&&archiveControl->remote)archiveControl->remote->service();if(liveControl&&liveControl->remote)liveControl->remote->service();if(liveControl&&heartbeat.elapsed()>10000){liveControl->control(1006,"KeepAlive");heartbeat.restart();}if(archiveControl&&heartbeat.elapsed()>10000){archiveControl->control(1006,"KeepAlive");heartbeat.restart();}}
 QByteArray Client::readVideo() {
  while(!stop && !archiveEnded) {
-  auto frame=parser.take(); if(!frame.isEmpty()) return frame;
   keepArchiveAlive();
+  auto frame=parser.take(); if(!frame.isEmpty()) return frame;
   if(heartbeat.elapsed()>10000) { send(1006,{{"Name","KeepAlive"},{"SessionID",QString("0x%1").arg(session,8,16,QChar('0'))}}); heartbeat.restart(); }
   auto data=chunk();
   if(messageId==(archive?1422:1412) || (archive && messageId==1426)) {if(archive && data.isEmpty()){archiveEnded=true;return {};}parser.append(data);}

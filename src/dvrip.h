@@ -3,10 +3,11 @@
 #include <atomic>
 #include <stdexcept>
 #include <memory>
+#include "xmcloud.h"
 namespace xm {
 constexpr quint32 MaxPayload = 8 * 1024 * 1024;
 QString digest(const QString &password);
-QByteArray header(quint32 session, quint32 sequence, quint16 command, quint32 size);
+QByteArray header(quint32 session, quint32 sequence, quint16 command, quint32 size, quint16 channel=0);
 quint32 payloadSize(const QByteArray &header);
 int channelCount(const QJsonObject &login, const QJsonObject &system = {});
 QVector<QUrl> channelUrls(const QUrl &recorder, int count, bool substream);
@@ -20,11 +21,18 @@ public:
 };
 class Client {
  QTcpSocket socket;
+ std::unique_ptr<cloud::Transport> remote;
+ cloud::Progress progress;
+ QByteArray sessionKey;
+ QSet<int> unencrypted;
+ std::unique_ptr<Client> liveControl;
+ void write(const QByteArray &bytes);
+ void connectCloud(const QUrl &url);
  quint32 session = 0, sequence = 0;
  std::atomic_bool &stop;
  MediaParser parser;
  QElapsedTimer heartbeat;
- quint16 messageId=0;
+ quint16 messageId=0, playbackChannel=0;
  std::unique_ptr<Client> archiveControl;
  QJsonObject archiveRequest;
  bool archive=false, archiveEnded=false, download=false;
@@ -34,7 +42,7 @@ class Client {
  QJsonObject response(bool fileSearch=false);
  QJsonObject login(const QUrl &url);
 public:
- explicit Client(std::atomic_bool &cancel):stop(cancel){}
+ explicit Client(std::atomic_bool &cancel,cloud::Progress callback={}):progress(std::move(callback)),stop(cancel){}
  ~Client();
  QJsonArray recordings(const QUrl &url,int channel,const QString &begin,const QString &end);
  void controlLogin(const QUrl &url){login(url);}

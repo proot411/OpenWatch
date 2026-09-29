@@ -1,3 +1,5 @@
+Experimental CloudID relay support is documented in [XMEye-CloudID-P2P.md](XMEye-CloudID-P2P.md). Statements below about unavailable cloud support describe the earlier stable release.
+
 # Protocol notes
 
 The protocol implementation is independently written around the publicly documented wire behavior visible in [go2rtc's DVRIP client](https://github.com/AlexxIT/go2rtc/blob/master/pkg/dvrip/client.go), [its video producer](https://github.com/AlexxIT/go2rtc/blob/master/pkg/dvrip/producer.go), and the [Python DVRIP project](https://github.com/alexshpilkin/dvrip). These projects are useful independent interoperability references. No upstream implementation files are vendored.
