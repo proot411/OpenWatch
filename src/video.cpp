@@ -176,7 +176,8 @@ Video::Result Video::runOnce(QUrl url,bool resumed) {
    if(output && requested!=activeRecord){closeRecord();status(((url.isLocalFile()||QUrlQuery(url).hasQueryItem("archiveFile"))?"Playback · ":"Live · ")+backend);}
    if(requested.isEmpty()&&!output)recordBusy=false;
    bool timestamped=packet->dts!=AV_NOPTS_VALUE || packet->pts!=AV_NOPTS_VALUE;
-   if(!requested.isEmpty() && !output && timestamped && (packet->flags&AV_PKT_FLAG_KEY)){
+   // Do not anchor decoding order to PTS while the demuxer is still deriving DTS.
+   if(!requested.isEmpty() && !output && packet->dts!=AV_NOPTS_VALUE && (packet->flags&AV_PKT_FLAG_KEY)){
     if(url.isLocalFile() && QFileInfo(requested).exists() && QFileInfo(requested).canonicalFilePath()==QFileInfo(url.toLocalFile()).canonicalFilePath())throw std::runtime_error("Recording output must not overwrite the source footage");
     if(avformat_alloc_output_context2(&output,nullptr,"matroska",nullptr)<0 || !output)throw std::runtime_error("Cannot create recording");
     auto *outTrack=avformat_new_stream(output,nullptr);if(!outTrack || avcodec_parameters_copy(outTrack->codecpar,track->codecpar)<0)throw std::runtime_error("Cannot create recording track");
@@ -194,7 +195,7 @@ Video::Result Video::runOnce(QUrl url,bool resumed) {
     if(firstDts==AV_NOPTS_VALUE)firstDts=copy->dts;
     copy->dts-=firstDts;if(copy->pts!=AV_NOPTS_VALUE)copy->pts-=firstDts;
     copy->stream_index=0;copy->pos=-1;av_packet_rescale_ts(copy,timebase,output->streams[0]->time_base);
-    if(copy->dts<=lastDts){av_packet_free(&copy);throw std::runtime_error("Non-monotonic recording timestamps");}lastDts=copy->dts;
+    if(copy->dts<=lastDts){qWarning()<<"Recording timing:"<<packet->dts<<packet->pts<<firstDts<<copy->dts<<lastDts;av_packet_free(&copy);throw std::runtime_error("Non-monotonic recording timestamps");}lastDts=copy->dts;
     int written=av_interleaved_write_frame(output,copy);av_packet_free(&copy);if(written<0)throw std::runtime_error("Recording write failed");
    }
    int sent=avcodec_send_packet(decoder,packet);if(sent==AVERROR(EAGAIN)){render();sent=avcodec_send_packet(decoder,packet);}if(sent<0)throw std::runtime_error("Video decode failed");render();av_packet_unref(packet);
