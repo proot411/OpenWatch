@@ -92,6 +92,12 @@ with tempfile.TemporaryDirectory() as root:
                     response = f"RTSP/1.0 200 OK\r\nCSeq: {headers['cseq']}\r\nSession: 12345678\r\n{extra}Content-Length: {len(body)}\r\n\r\n".encode() + body
                     conn.sendall(response)
                     if method == 'PLAY': break
+                # Map both RTP clocks to the same wall-clock origin, as a real
+                # RTSP sender does. Older FFmpeg waits for these sender reports.
+                ntp = int(time.time()) + 2208988800
+                for interleaved, ssrc in ((1, 123), (3, 456)):
+                    report = struct.pack('!BBHIIIIII', 128, 200, 6, ssrc, ntp, 0, 0, 0, 0)
+                    conn.sendall(b'$' + bytes([interleaved]) + struct.pack('!H', len(report)) + report)
                 sequence = 0
                 for index in range(200):
                     group = groups[index % len(groups)]

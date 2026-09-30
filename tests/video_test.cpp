@@ -48,7 +48,7 @@ int main(int argc,char **argv){
  if(argc==4&&QString::fromLocal8Bit(argv[3])=="--audio"){
   Video video;video.record(QString::fromLocal8Bit(argv[2]));video.audio(true);video.start(QUrl::fromUserInput(QString::fromLocal8Bit(argv[1])));QElapsedTimer timer;timer.start();
   while(timer.elapsed()<7000&&(video.audioBytes()<10000||video.frame().isNull()))QThread::msleep(20);
-  if(video.audioBytes()<10000||video.frame().isNull()){qWarning()<<video.audioStatus();return 7;}
+  if(video.audioBytes()<10000||video.frame().isNull()){qWarning()<<video.audioStatus()<<"audio bytes"<<video.audioBytes()<<"frame"<<!video.frame().isNull()<<"video"<<video.status();return 7;}
   video.audio(false);auto muted=video.audioBytes();QThread::msleep(300);if(video.audioBytes()!=muted)return 8;
   video.audio(true);timer.restart();while(timer.elapsed()<3000&&video.audioBytes()==muted)QThread::msleep(20);
   if(video.audioBytes()==muted)return 9;video.stop();auto stopped=video.audioBytes();QThread::msleep(100);return video.audioBytes()==stopped?0:10;
