@@ -11,6 +11,7 @@
 #include <linux/fs.h>
 #endif
 extern "C" {
+#include <libavutil/common.h>
 #include <libavutil/error.h>
 }
 namespace wfs {

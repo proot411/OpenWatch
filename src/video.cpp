@@ -60,7 +60,8 @@ Video::Result Video::runOnce(QUrl url,bool resumed) {
  Deadline deadline{cancelled};
  try {
   status("Connecting…"); format=avformat_alloc_context(); deadline.reset(); format->interrupt_callback={Deadline::interrupt,&deadline};
-  const AVInputFormat *demux=nullptr;
+  // FFmpeg 4 returns a mutable format pointer; newer versions return const.
+  decltype(av_find_input_format("h264")) demux=nullptr;
   if(url.scheme()=="dvrip") {
    input=std::make_unique<Input>(cancelled,status); input->archive=QUrlQuery(url).hasQueryItem("archiveFile");input->client.open(url); input->fetch();
    int code=input->client.codec();

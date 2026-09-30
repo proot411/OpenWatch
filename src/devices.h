@@ -9,7 +9,7 @@ inline void remove(QListWidget *list,QVector<QUrl> &urls,const QVector<Cell*> &c
  if(row<0 || row>=list->count() || row>=urls.size())return;
  auto identity=id(list->item(row));
  for(auto *cell:cells)if(cell->deviceId==identity)cell->video.requestStop();
- for(auto *cell:cells)if(cell->deviceId==identity){cell->video.clear();cell->deviceId={};cell->name.clear();cell->zoom=1;cell->zoomPan={};cell->update();}
+ for(auto *cell:cells)if(cell->deviceId==identity){cell->video.clear();cell->deviceId=QUuid{};cell->name.clear();cell->zoom=1;cell->zoomPan={};cell->update();}
  urls.removeAt(row);delete list->takeItem(row);
 }
 inline bool edit(QWidget *parent,QString &name,QUrl &source){

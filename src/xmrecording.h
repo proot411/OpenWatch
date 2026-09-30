@@ -4,6 +4,7 @@
 #include <atomic>
 #include <stdexcept>
 extern "C" {
+#include <libavutil/common.h>
 #include <libavutil/error.h>
 }
 #include "dvrip.h"
