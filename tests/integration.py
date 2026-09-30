@@ -66,6 +66,8 @@ with tempfile.TemporaryDirectory() as root:
     for nal in nals:
         if nal[0] & 31 == 9 or not groups: groups.append([])
         groups[-1].append(nal)
+    # Parameter/SEI-only preambles are not video access units.
+    groups = [group for group in groups if any(n[0] & 31 in (1, 5) for n in group)]
     rtsp = socket.socket(); rtsp.bind(('127.0.0.1', 0)); rtsp.listen(1); rtsp.settimeout(15)
     errors.clear()
     def serve_rtsp():
@@ -87,6 +89,9 @@ with tempfile.TemporaryDirectory() as root:
                     if method == 'DESCRIBE':
                         body = ('v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=Fixture\r\nc=IN IP4 127.0.0.1\r\nt=0 0\r\nm=video 0 RTP/AVP 96\r\na=rtpmap:96 H264/90000\r\na=fmtp:96 packetization-mode=1;sprop-parameter-sets=' + base64.b64encode(sps).decode() + ',' + base64.b64encode(pps).decode() + '\r\na=control:track1\r\nm=audio 0 RTP/AVP 0\r\na=rtpmap:0 PCMU/8000/1\r\na=control:track2\r\n').encode()
                         extra = 'Content-Type: application/sdp\r\n'
+                    elif method == 'PLAY':
+                        base = f'rtsp://127.0.0.1:{rtsp.getsockname()[1]}/live'
+                        extra = f'Range: npt=0.000-\r\nRTP-Info: url={base}/track1;seq=0;rtptime=0,url={base}/track2;seq=0;rtptime=0\r\n'
                     elif method == 'SETUP': extra = 'Transport: ' + headers['transport'] + '\r\n'
                     elif method == 'OPTIONS': extra = 'Public: OPTIONS, DESCRIBE, SETUP, PLAY, TEARDOWN\r\n'
                     response = f"RTSP/1.0 200 OK\r\nCSeq: {headers['cseq']}\r\nSession: 12345678\r\n{extra}Content-Length: {len(body)}\r\n\r\n".encode() + body
