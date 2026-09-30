@@ -2,6 +2,7 @@
 #include "dvrip.h"
 #include "xmrecording.h"
 #include "wfsdisk.h"
+#include "recordingclock.h"
 extern "C" {
 #include <libavformat/avformat.h>
 #include <libavcodec/avcodec.h>
@@ -54,7 +55,7 @@ Video::Result Video::runOnce(QUrl url,bool resumed) {
  AVCodecContext *decoder=nullptr; AVIOContext *io=nullptr;
  AVPacket *packet=av_packet_alloc(); AVFrame *decoded=av_frame_alloc(),*cpu=av_frame_alloc(); SwsContext *scale=nullptr;
  AVBufferRef *device=nullptr; std::unique_ptr<Input> input;std::unique_ptr<xm::Recording> recording;std::unique_ptr<wfs::Stream> disk;
- bool recordHeader=false; QString activeRecord; int64_t firstDts=AV_NOPTS_VALUE,lastDts=-1,synthetic=0; AVRational timebase{1,25};
+ bool recordHeader=false; QString activeRecord; int64_t firstDts=AV_NOPTS_VALUE,synthetic=0; RecordingClock recordingClock; AVRational timebase{1,25};
  auto status=[&](QString message){QMutexLocker lock(&mutex);state=message;};
  auto closeRecord=[&](){if(output){if(recordHeader)av_write_trailer(output);avio_closep(&output->pb);avformat_free_context(output);output=nullptr;} recordHeader=false; activeRecord.clear();recordOpen=false;};
  Deadline deadline{cancelled};
@@ -186,7 +187,7 @@ Video::Result Video::runOnce(QUrl url,bool resumed) {
     if(resumed){QFileInfo file(requested);target=file.dir().filePath(file.completeBaseName()+"-reconnect-"+QDateTime::currentDateTimeUtc().toString("yyyyMMdd-HHmmss-zzz")+"-"+QUuid::createUuid().toString(QUuid::Id128).left(8)+".mkv");}
     auto path=target.toUtf8();if(avio_open(&output->pb,path.constData(),AVIO_FLAG_WRITE)<0)throw std::runtime_error("Cannot write recording file");
     if(avformat_write_header(output,nullptr)<0)throw std::runtime_error("Cannot write recording header");
-    recordHeader=true;recordOpen=true;activeRecord=requested;firstDts=AV_NOPTS_VALUE;lastDts=-1;status("Recording · "+backend);
+    recordHeader=true;recordOpen=true;activeRecord=requested;firstDts=AV_NOPTS_VALUE;recordingClock.reset();status("Recording · "+backend);
    }
    if(output && timestamped){
     AVPacket *copy=av_packet_clone(packet);if(!copy)throw std::runtime_error("Packet allocation failed");
@@ -195,7 +196,9 @@ Video::Result Video::runOnce(QUrl url,bool resumed) {
     if(firstDts==AV_NOPTS_VALUE)firstDts=copy->dts;
     copy->dts-=firstDts;if(copy->pts!=AV_NOPTS_VALUE)copy->pts-=firstDts;
     copy->stream_index=0;copy->pos=-1;av_packet_rescale_ts(copy,timebase,output->streams[0]->time_base);
-    if(copy->dts<=lastDts){qWarning()<<"Recording timing:"<<packet->dts<<packet->pts<<firstDts<<copy->dts<<lastDts;av_packet_free(&copy);throw std::runtime_error("Non-monotonic recording timestamps");}lastDts=copy->dts;
+    int64_t duration=copy->duration;
+    if(duration<=0){auto fps=av_guess_frame_rate(format,track,nullptr);if(fps.num>0&&fps.den>0)duration=av_rescale_q(1,av_inv_q(fps),output->streams[0]->time_base);}
+    try{recordingClock.apply(copy->dts,copy->pts,duration);}catch(...){av_packet_free(&copy);throw;}
     int written=av_interleaved_write_frame(output,copy);av_packet_free(&copy);if(written<0)throw std::runtime_error("Recording write failed");
    }
    int sent=avcodec_send_packet(decoder,packet);if(sent==AVERROR(EAGAIN)){render();sent=avcodec_send_packet(decoder,packet);}if(sent<0)throw std::runtime_error("Video decode failed");render();av_packet_unref(packet);
