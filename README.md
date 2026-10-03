@@ -26,7 +26,7 @@ It is written in **C++17**, **Qt 6**, **FFmpeg**, **OpenSSL**, and **SDL2**, wit
 >
 > XMEye CloudID relay operation is implemented. **Direct NAT hole-punching / direct peer-to-peer transport is not currently implemented.**
 
-![OpenWatch live-view workspace with device list and four video cells](images/OpenWatch_test.png)
+![OpenWatch workspace with device list and four empty video cells](images/OpenWatch_test.png)
 
 *Screenshots in this repository were supplied by the project owner and may show an earlier interface revision. Redacted or blank camera regions in supplied screenshots are intentional.*
 
@@ -255,10 +255,6 @@ It does not currently implement the Android XMEye account/RPS flow.
 6. Select one or more profiles.
 7. Click **Open selected streams**.
 
-![Discovery results showing XMEye and ONVIF devices](images/discovery.png)
-
-![ONVIF camera profiles available for selection](images/IP_Camera_ONVIF_Profile.png)
-
 ![Discover cameras and recorders window showing a completed LAN scan and loaded ONVIF profiles](images/Network_scan_demo.png)
 
 *A completed LAN scan. The list shows one XMEye recorder and several ONVIF cameras. After **Load channels / profiles**, the profile list shows what each camera offers, and up to 64 streams can be opened at once.*
@@ -299,13 +295,9 @@ Credentials should preferably be entered in OpenWatch's separate username/passwo
 
 # Workspace controls
 
-![Empty OpenWatch workspace with four drop targets and the device sidebar](images/Main_screen.png)
-
-*The empty workspace. Double-click a device to connect, or drag it into a view.*
-
 ![OpenWatch workspace showing a recorder, a camera and an RTSP desktop stream in a 4-cell grid](images/Main_demo.png)
 
-*The same workspace with live streams. The sidebar groups recorder channels and ONVIF/manual streams. Each cell shows its source, stream type and state.*
+*The workspace with live streams. Double-click a device to connect, or drag it into a view. The sidebar groups recorder channels and ONVIF/manual streams. Each cell shows its source, stream type and state.*
 
 | Action | Control |
 | --- | --- |
