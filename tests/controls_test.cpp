@@ -16,6 +16,31 @@ private slots:
   QVERIFY_EXCEPTION_THROWN(vault::open(bytes.left(40),"a long test passphrase"),std::runtime_error);
  }
  void registryValidation(){QJsonObject entry{{"id",QUuid::createUuid().toString()},{"name","Front"},{"url","rtsp://admin:test@192.0.2.1/live"},{"group","Home"},{"onvif","http://192.0.2.1:8080/device"}};QJsonArray rows{entry};auto data=QJsonDocument(rows).toJson();QCOMPARE(registry::validate(vault::open(vault::seal(data,"long test password"),"long test password")),rows);rows.append(entry);QVERIFY_EXCEPTION_THROWN(registry::validate(QJsonDocument(rows).toJson()),std::runtime_error);entry["url"]="file:///tmp/private";QVERIFY_EXCEPTION_THROWN(registry::validate(QJsonDocument(QJsonArray{entry}).toJson()),std::runtime_error);entry["url"]="rtsp://192.0.2.2/live";QVERIFY_EXCEPTION_THROWN(registry::validate(QJsonDocument(QJsonArray{entry}).toJson()),std::runtime_error);}
+ void layoutEnvelope(){
+  // Legacy bare-array files still load and report no layout.
+  QJsonObject entry{{"id",QUuid::createUuid().toString()},{"name","Front"},{"url","rtsp://192.0.2.1/live"},{"group",QString()},{"onvif",QString()}};
+  auto legacy=registry::unpack(QJsonDocument(QJsonArray{entry}).toJson());
+  QCOMPARE(legacy.devices.size(),1);QCOMPARE(legacy.grid,0);QVERIFY(legacy.cells.isEmpty());
+  // Envelope round-trip keeps grid size and cell assignments.
+  QListWidget list;QVector<QUrl> urls{QUrl("rtsp://192.0.2.1/live"),QUrl("rtsp://192.0.2.2/live")};
+  auto *first=new QListWidgetItem("Front");first->setData(Qt::UserRole,QUuid(entry["id"].toString()));list.addItem(first);
+  auto *second=new QListWidgetItem("Back");second->setData(Qt::UserRole,QUuid::createUuid());list.addItem(second);
+  QUuid front(first->data(Qt::UserRole).toUuid());
+  auto packed=registry::pack(&list,urls,4,{front,QUuid(),QUuid(),QUuid()});
+  auto snapshot=registry::unpack(QJsonDocument(packed).toJson(QJsonDocument::Compact));
+  QCOMPARE(snapshot.devices.size(),2);QCOMPARE(snapshot.grid,4);QCOMPARE(snapshot.cells.size(),4);QCOMPARE(snapshot.cells[0],front);QVERIFY(snapshot.cells[1].isNull());
+  // Wrong passphrase and damaged payloads never yield a partial snapshot.
+  auto sealed=vault::seal(QJsonDocument(packed).toJson(QJsonDocument::Compact),"a long test passphrase");
+  QVERIFY_EXCEPTION_THROWN(registry::unpack(vault::open(sealed,"wrong passphrase")),std::runtime_error);
+  auto damaged=sealed;damaged[damaged.size()/2]^=0x40;QVERIFY_EXCEPTION_THROWN(registry::unpack(vault::open(damaged,"a long test passphrase")),std::runtime_error);
+  // A cell pointing at a dropped device discards the layout instead of reconnecting blind.
+  auto dangling=QJsonDocument(packed).object();auto cells=dangling["layout"].toObject()["cells"].toArray();cells[0]=QUuid::createUuid().toString();auto layout=dangling["layout"].toObject();layout["cells"]=cells;dangling["layout"]=layout;
+  auto dropped=registry::unpack(QJsonDocument(dangling).toJson(QJsonDocument::Compact));
+  QCOMPARE(dropped.devices.size(),2);QCOMPARE(dropped.grid,0);QVERIFY(dropped.cells.isEmpty());
+  // Unknown grid sizes are ignored, not trusted.
+  auto badGrid=QJsonDocument(packed).object();auto badLayout=badGrid["layout"].toObject();badLayout["grid"]=7;badGrid["layout"]=badLayout;
+  QCOMPARE(registry::unpack(QJsonDocument(badGrid).toJson(QJsonDocument::Compact)).grid,0);
+ }
  void xmMovement_data(){QTest::addColumn<bool>("rejectMove");QTest::newRow("success and stop")<<false;QTest::newRow("rejection still stops")<<true;}
  void xmMovement(){
   QFETCH(bool,rejectMove);QTcpServer server;QVERIFY(server.listen(QHostAddress::LocalHost));QVector<QJsonObject> commands;

@@ -453,7 +453,17 @@ The passphrase is **not stored by OpenWatch**.
 
 If you lose the passphrase, OpenWatch cannot recover it.
 
-Loading a device file replaces the current device list and does not automatically reconnect every entry.
+Loading a device file replaces the current device list **and restores the saved camera layout**: the grid returns to its saved size and each saved cell reconnects to its camera.
+
+The file is decrypted and validated before any state is touched. If the passphrase is wrong, nothing changes — the running session, its device list and its grid stay exactly as they were. A saved cell that points to a device no longer in the file discards the layout rather than reconnecting to the wrong camera. Files written by older OpenWatch versions (a plain JSON device array) still load and simply report no saved layout.
+
+The **Configuration** menu controls this:
+
+- **Choose configuration file...** selects the `.owv` to use;
+- **Load configuration now** unlocks that file immediately;
+- **Load configuration on startup** prompts for the passphrase when OpenWatch opens and rebuilds the grid.
+
+The chosen file path is remembered between sessions. The passphrase never is. Startup loading is skipped when OpenWatch is launched with command-line flags, so test and scripted runs are never interrupted by a prompt.
 
 Save again after changing entries if you want the updated list preserved.
 

@@ -1,4 +1,5 @@
 #include <QtWidgets>
+#include <QSettings>
 #include <cmath>
 #include "cell.h"
 #include "wfstestdialog.h"
@@ -8,6 +9,7 @@
 #include "recordingui.h"
 #include "playbackwindow.h"
 #include "registry.h"
+#include "theme.h"
 #include "controls.h"
 #include "ptzkeys.h"
 #include "navigation.h"
@@ -20,10 +22,18 @@ class WorkspaceWindow:public QMainWindow {public:std::function<void()> beforeClo
 class CameraList:public QListWidget {
  void startDrag(Qt::DropActions)override{if(currentRow()<0)return;auto *mime=new QMimeData;mime->setData("application/x-openwatch-camera",devices::id(currentItem()).toString().toUtf8());auto *drag=new QDrag(this);drag->setMimeData(mime);drag->exec(Qt::CopyAction);}
 };
+class EmptyState:public QObject { // keeps a centred hint pinned inside the device tree viewport
+ QWidget *viewport;QLabel *hint;
+ public:
+  EmptyState(QWidget *viewport,QLabel *hint):viewport(viewport),hint(hint){viewport->installEventFilter(this);place();}
+  void place(){hint->setGeometry(viewport->rect().adjusted(12,12,-12,-12));}
+  bool eventFilter(QObject *watched,QEvent *event)override{if(watched==viewport&&event->type()==QEvent::Resize)place();return QObject::eventFilter(watched,event);}
+};
 int main(int argc,char **argv){
  QApplication app(argc,argv);app.setApplicationName("OpenWatch");app.setOrganizationName("OpenWatch");av_log_set_level(AV_LOG_QUIET);
+ QSettings settings; // startup/configuration preferences (never stores the passphrase)
  WorkspaceWindow window;window.setWindowTitle("OpenWatch • Video workspace");auto available=app.primaryScreen()->availableGeometry().size();window.resize(qMin(1360,available.width()),qMin(860,available.height()-40));
- app.setStyle("Fusion");app.setStyleSheet("QWidget{background:#0c131d;color:#dbe5ef;font-family:'Sans Serif';font-size:13px;} QPushButton,QComboBox{background:#1c2b3d;border:1px solid #304259;border-radius:6px;padding:8px 12px;} QPushButton:hover{border-color:#38d8b2;} QPushButton:disabled{color:#687b90;} QLineEdit,QListWidget,QTreeWidget{background:#111b28;border:1px solid #29394b;padding:8px;} QToolBar{spacing:8px;padding:12px;border-bottom:1px solid #263447;} QTreeWidget::item{padding:7px 2px;} QTreeWidget::item:selected{background:#25483f;color:#ffffff;} QMenu::item{padding:9px 22px;} QMenu::item:selected{background:#25483f;} QTabWidget::pane{border:1px solid #304259;} QTabBar::tab{background:#172231;padding:10px 22px;border-bottom:2px solid #263447;} QTabBar::tab:selected{background:#243a49;border-bottom:2px solid #38d8b2;} QStatusBar{color:#90a5bb;} QLabel#brand{font-size:23px;font-weight:700;color:#54dfba;}");
+ app.setStyle("Fusion");app.setStyleSheet(theme::stylesheet());
  auto *toolbar=window.addToolBar("Workspace");toolbar->setMovable(false);auto *brand=new QLabel("◉  OpenWatch   ");brand->setObjectName("brand");toolbar->addWidget(brand);
  auto *central=new QWidget;auto *horizontal=new QHBoxLayout(central);horizontal->setContentsMargins(12,12,12,12);horizontal->setSpacing(12);window.setCentralWidget(central);
  auto *side=new QWidget;side->setFixedWidth(290);auto *sidebar=new QVBoxLayout(side);sidebar->setContentsMargins(0,0,0,0);sidebar->setSpacing(8);horizontal->addWidget(side);
@@ -34,6 +44,12 @@ int main(int argc,char **argv){
  auto button=[&](QString text,auto callback){auto *b=new QPushButton(text,&window);QObject::connect(b,&QPushButton::clicked,callback);if(text=="Playback"){b->hide();QObject::connect(navPlayback,&QPushButton::clicked,b,&QPushButton::click);}else if(QStringList{"Camera controls","Snapshot","Record","Reset zoom"}.contains(text)){auto *action=toolbar->insertWidget(toolbar->actions().last(),b);action->setVisible(true);}else{b->hide();auto *menu=text.contains("Add device")?deviceMenu:cameraMenu;auto *action=menu->addAction(text);QObject::connect(action,&QAction::triggered,b,&QPushButton::click);}return b;};
  auto *list=new CameraList;list->setParent(side);list->hide();auto *tree=new DeviceTree;sidebar->addWidget(tree,1);
  auto *hint=new QLabel("Double-click to connect · Drag into a view");hint->setWordWrap(true);hint->setStyleSheet("color:#8195aa;");sidebar->addWidget(hint);
+ auto *emptyHint=new QLabel(tree->viewport());emptyHint->setObjectName("emptyHint");emptyHint->setAlignment(Qt::AlignCenter);emptyHint->setWordWrap(true);
+ emptyHint->setText("No cameras yet\n\nAdd one with Devices ▾ → Add device,\nor use Discover devices to find cameras on this network.\n\nOnce added, double-click an entry or drag it into a view.");
+ emptyHint->setStyleSheet("color:#8195aa;background:#0f172a;border:1px dashed #334155;border-radius:8px;padding:16px;");
+ emptyHint->setAttribute(Qt::WA_TransparentForMouseEvents);new EmptyState(tree->viewport(),emptyHint);
+ auto updateEmpty=[&]{emptyHint->setVisible(list->count()==0);};
+ QObject::connect(list->model(),&QAbstractItemModel::rowsInserted,updateEmpty);QObject::connect(list->model(),&QAbstractItemModel::rowsRemoved,updateEmpty);updateEmpty();
  auto *gridWidget=new QWidget;auto *grid=new QGridLayout(gridWidget);grid->setContentsMargins(0,0,0,0);grid->setSpacing(8);horizontal->addWidget(gridWidget,1);
  QVector<Cell*> cells;QVector<QUrl> urls;Cell *selected=nullptr;bool listen=false;int volume=75;QHash<QUuid,QPointer<CameraControls>> controls;
  RecordingUi recordingUi(&window);window.beforeClose=[&]{recordingUi.closeAll();};
@@ -76,8 +92,6 @@ int main(int argc,char **argv){
  auto *groupButton=new QPushButton("Assign group");groupButton->setParent(side);groupButton->hide();deviceMenu->addAction("Assign selected camera to group",groupButton,&QPushButton::click);
  QObject::connect(groupButton,&QPushButton::clicked,[&]{auto *item=list->currentItem();if(!item)return;bool ok=false;auto name=QInputDialog::getText(&window,"Device group","Group name (empty removes group)",QLineEdit::Normal,item->data(registry::GroupRole).toString(),&ok);if(ok)item->setData(registry::GroupRole,name.trimmed());});
  auto *files=new QWidget;auto *fileRow=new QHBoxLayout(files);fileRow->setContentsMargins(0,0,0,0);auto *save=new QPushButton("Save devices"),*load=new QPushButton("Load devices");fileRow->addWidget(save);fileRow->addWidget(load);files->setParent(side);files->hide();deviceMenu->addSeparator();deviceMenu->addAction("Save encrypted devices…",save,&QPushButton::click);deviceMenu->addAction("Load encrypted devices…",load,&QPushButton::click);
- QObject::connect(save,&QPushButton::clicked,[&]{auto path=QFileDialog::getSaveFileName(&window,"Save encrypted devices",{},"OpenWatch devices (*.owv)");if(path.isEmpty())return;if(!path.endsWith(".owv",Qt::CaseInsensitive)){path+=".owv";if(QFileInfo::exists(path)&&QMessageBox::question(&window,"Replace device file","Replace the existing device file at "+path+"?")!=QMessageBox::Yes)return;}QString secret;if(!registry::passphrase(&window,secret,true))return;try{auto bytes=vault::seal(QJsonDocument(registry::serialize(list,urls)).toJson(QJsonDocument::Compact),secret);QSaveFile file(path);if(!file.open(QIODevice::WriteOnly)||file.write(bytes)!=bytes.size()||!file.commit())throw std::runtime_error("Cannot save device file");window.statusBar()->showMessage("Encrypted device list saved",5000);}catch(const std::exception &e){QMessageBox::warning(&window,"Save devices",e.what());}});
- QObject::connect(load,&QPushButton::clicked,[&]{auto path=QFileDialog::getOpenFileName(&window,"Load devices (replaces current list)",{},"OpenWatch devices (*.owv)");if(path.isEmpty())return;QString secret;if(!registry::passphrase(&window,secret,false))return;try{QFile file(path);if(!file.open(QIODevice::ReadOnly)||file.size()>4*1024*1024+48)throw std::runtime_error("Cannot read device file or file too large");auto rows=registry::validate(vault::open(file.readAll(),secret));for(auto dialog:controls)if(dialog)delete dialog;controls.clear();for(auto *cell:cells)cell->video.requestStop();while(list->count())devices::remove(list,urls,cells,list->count()-1);navigation.restore();for(auto row:rows){auto o=row.toObject();urls.append(QUrl(o["url"].toString()));auto *item=new QListWidgetItem(o["name"].toString());item->setData(Qt::UserRole,QUuid(o["id"].toString()));item->setData(registry::GroupRole,o["group"].toString());item->setData(registry::EndpointRole,o["onvif"].toString());list->addItem(item);}refreshGroups();window.statusBar()->showMessage("Devices loaded. Double-click a device or drag it into the grid to connect.",8000);}catch(const std::exception &e){QMessageBox::warning(&window,"Load devices",e.what());}});
  auto controlFor=[&](int row,bool create)->CameraControls*{if(row<0||row>=urls.size())return nullptr;auto *item=list->item(row);auto id=devices::id(item);auto dialog=controls.value(id);
   if(dialog&&!dialog->matchesSource(urls[row])){delete dialog;dialog=nullptr;controls.remove(id);}
   if(!dialog&&create){dialog=new CameraControls(item->text(),urls[row],item->data(registry::EndpointRole).toString(),&window);controls[id]=dialog;dialog->report=[&](QString message){window.statusBar()->showMessage(message,5000);};
@@ -91,12 +105,38 @@ int main(int argc,char **argv){
  auto *audioLabel=new QLabel("Audio muted");audioLabel->setWordWrap(true);sidebar->insertWidget(sidebar->indexOf(hint),audioLabel);
 
  button("Reset zoom",[&]{selected->zoom=1;selected->zoomPan={};selected->update();});
- button("＋ Add device",[&]{QDialog dialog(&window);dialog.setWindowTitle("Add video source");auto *form=new QFormLayout(&dialog);QLineEdit label("Camera"),url,user,password;url.setPlaceholderText("dvrip://192.168.1.10:34567?channel=0&subtype=0");url.setMinimumWidth(500);password.setEchoMode(QLineEdit::Password);form->addRow("Name",&label);form->addRow("Stream URL",&url);form->addRow("Username",&user);form->addRow("Password",&password);form->addRow(new QLabel("DVRIP · RTSP · RTMP · HTTP(S) HLS\nDVRIP channels start at 0. Use Save devices to keep an encrypted list."));QDialogButtonBox buttons(QDialogButtonBox::Ok|QDialogButtonBox::Cancel);form->addRow(&buttons);QObject::connect(&buttons,&QDialogButtonBox::accepted,&dialog,&QDialog::accept);QObject::connect(&buttons,&QDialogButtonBox::rejected,&dialog,&QDialog::reject);if(dialog.exec()!=QDialog::Accepted)return;QUrl source(url.text().trimmed());if(!QStringList{"dvrip","rtsp","rtsps","rtmp","rtmps","http","https"}.contains(source.scheme())||source.host().isEmpty()){QMessageBox::warning(&window,"Invalid source","Enter a supported URL with a host.");return;}if(!user.text().isEmpty())source.setUserName(user.text());if(!password.text().isEmpty())source.setPassword(password.text());urls.append(source);list->addItem(label.text().isEmpty()?"Camera":label.text());});
+ auto *addDeviceButton=button("＋ Add device",[&]{QDialog dialog(&window);dialog.setWindowTitle("Add video source");auto *form=new QFormLayout(&dialog);QLineEdit label("Camera"),url,user,password;url.setPlaceholderText("dvrip://192.168.1.10:34567?channel=0&subtype=0");url.setMinimumWidth(500);password.setEchoMode(QLineEdit::Password);form->addRow("Name",&label);form->addRow("Stream URL",&url);form->addRow("Username",&user);form->addRow("Password",&password);form->addRow(new QLabel("DVRIP · RTSP · RTMP · HTTP(S) HLS\nDVRIP channels start at 0. Use Save devices to keep an encrypted list."));QDialogButtonBox buttons(QDialogButtonBox::Ok|QDialogButtonBox::Cancel);form->addRow(&buttons);QObject::connect(&buttons,&QDialogButtonBox::accepted,&dialog,&QDialog::accept);QObject::connect(&buttons,&QDialogButtonBox::rejected,&dialog,&QDialog::reject);if(dialog.exec()!=QDialog::Accepted)return;QUrl source(url.text().trimmed());if(!QStringList{"dvrip","rtsp","rtsps","rtmp","rtmps","http","https"}.contains(source.scheme())||source.host().isEmpty()){QMessageBox::warning(&window,"Invalid source","Enter a supported URL with a host.");return;}if(!user.text().isEmpty())source.setUserName(user.text());if(!password.text().isEmpty())source.setPassword(password.text());urls.append(source);list->addItem(label.text().isEmpty()?"Camera":label.text());});
  auto *recordButton=button("Record",[&]{recordingUi.toggle(selected);});recordButton->setObjectName("recordToggle");
  cameraMenu->addAction("Unsaved recordings",[&]{QDir().mkpath(RecordingUi::pendingRoot());QDesktopServices::openUrl(QUrl::fromLocalFile(RecordingUi::pendingRoot()));});
  button("Snapshot",[&]{auto frame=selected->video.frame();if(frame.isNull())return;auto path=QFileDialog::getSaveFileName(&window,"Save snapshot",{},"PNG (*.png)");if(!path.isEmpty()&&!frame.save(path,"PNG"))QMessageBox::warning(&window,"Snapshot","Could not save image.");});
  button("Disconnect",[&]{selected->video.stop();});
  auto *layout=new QComboBox;layout->setObjectName("gridLayout");for(int n:{1,4,9,16,25,36,64})layout->addItem(QString::number(n)+" channels",n);layout->setCurrentIndex(1);toolbar->addWidget(layout);QObject::connect(layout,&QComboBox::currentIndexChanged,[&](int){arrange(layout->currentData().toInt());});
+ QObject::connect(save,&QPushButton::clicked,[&]{auto path=QFileDialog::getSaveFileName(&window,"Save encrypted devices",settings.value("deviceFile").toString(),"OpenWatch devices (*.owv)");if(path.isEmpty())return;if(!path.endsWith(".owv",Qt::CaseInsensitive)){path+=".owv";if(QFileInfo::exists(path)&&QMessageBox::question(&window,"Replace device file","Replace the existing device file at "+path+"?")!=QMessageBox::Yes)return;}QString secret;if(!registry::passphrase(&window,secret,true))return;try{QVector<QUuid> assigned;for(auto *cell:cells)assigned.append(cell->deviceId);auto bytes=vault::seal(QJsonDocument(registry::pack(list,urls,layout->currentData().toInt(),assigned)).toJson(QJsonDocument::Compact),secret);QSaveFile file(path);if(!file.open(QIODevice::WriteOnly)||file.write(bytes)!=bytes.size()||!file.commit())throw std::runtime_error("Cannot save device file");settings.setValue("deviceFile",path);settings.sync();window.statusBar()->showMessage("Encrypted device list and camera layout saved",5000);}catch(const std::exception &e){QMessageBox::warning(&window,"Save devices",e.what());}});
+  // Returns 0 = user cancelled, 1 = unlock failed (safe to retry), 2 = loaded.
+  auto loadConfiguration=[&](const QString &path)->int{
+   QString secret;if(!registry::passphrase(&window,secret,false))return 0;
+   QByteArray payload;
+   try{QFile file(path);
+    if(!file.open(QIODevice::ReadOnly)||file.size()>4*1024*1024+48)throw std::runtime_error("Cannot read device file or file too large");
+    payload=vault::open(file.readAll(),secret);
+   }catch(const std::exception &e){QMessageBox::warning(&window,"Load devices",e.what());return 1;} // wrong passphrase: no state was touched
+   try{
+    auto snapshot=registry::unpack(payload); // decrypt + validate before touching any state
+    for(auto dialog:controls)if(dialog)delete dialog;controls.clear();
+    for(auto *cell:cells)cell->video.requestStop();
+    while(list->count())devices::remove(list,urls,cells,list->count()-1);
+    navigation.restore();
+    for(auto row:snapshot.devices){auto o=row.toObject();urls.append(QUrl(o["url"].toString()));auto *item=new QListWidgetItem(o["name"].toString());item->setData(Qt::UserRole,QUuid(o["id"].toString()));item->setData(registry::GroupRole,o["group"].toString());item->setData(registry::EndpointRole,o["onvif"].toString());list->addItem(item);}
+    refreshGroups();settings.setValue("deviceFile",path);settings.sync();
+    int restored=0;
+    if(snapshot.grid>0){int index=layout->findData(snapshot.grid);if(index>=0){layout->setCurrentIndex(index);arrange(snapshot.grid);
+      for(int i=0;i<snapshot.cells.size()&&i<snapshot.grid;++i){auto identity=snapshot.cells[i];if(identity.isNull())continue;int row=devices::rowForId(list,identity);if(row<0)continue;connectCell(cells[i],row);++restored;}}}
+    if(!restored)choose(cells[0]);
+    window.statusBar()->showMessage(restored?QString("Configuration loaded: %1 device(s), %2 view(s) restored.").arg(list->count()).arg(restored):"Devices loaded. Double-click a device or drag it into the grid to connect.",8000);
+    return 2;
+   }catch(const std::exception &e){QMessageBox::warning(&window,"Load devices",e.what());return 1;}
+  };
+ QObject::connect(load,&QPushButton::clicked,[&]{auto path=QFileDialog::getOpenFileName(&window,"Load devices (replaces current list)",settings.value("deviceFile").toString(),"OpenWatch devices (*.owv)");if(!path.isEmpty())loadConfiguration(path);});
 
  button("Playback",[&]{QUrl initial;int playbackRow=list->currentRow();if(playbackRow<0&&tree->currentItem()&&tree->currentItem()->childCount())playbackRow=devices::rowForId(list,tree->deviceId(tree->currentItem()->child(0)));if(playbackRow<0)playbackRow=devices::rowForId(list,selected->deviceId);if(playbackRow>=0&&playbackRow<urls.size()&&urls[playbackRow].scheme()=="dvrip")initial=urls[playbackRow];if(list->currentRow()>=0&&list->currentRow()<urls.size()&&urls[list->currentRow()].scheme()=="dvrip")initial=urls[list->currentRow()];if(!playbackWindow){playbackWindow=new PlaybackWindow(initial,&window);playbackWindow->setAttribute(Qt::WA_DeleteOnClose);}playbackWindow->show();playbackWindow->raise();playbackWindow->activateWindow();});
  auto *xmButton=new QPushButton("XMEye recorder");xmButton->setObjectName("xmRecorder");deviceMenu->addAction("Add XMEye recorder",xmButton,&QPushButton::click);xmButton->setParent(side);xmButton->hide();
@@ -143,7 +183,55 @@ int main(int argc,char **argv){
  auto *right=new QShortcut(QKeySequence(Qt::Key_Right),&window);QObject::connect(right,&QShortcut::activated,[&]{if(!side->isAncestorOf(app.focusWidget()))navigation.step(1);});
  QObject::connect(&app,&QApplication::focusChanged,[&](QWidget*,QWidget *now){bool browsing=now&&side->isAncestorOf(now);left->setEnabled(!browsing);right->setEnabled(!browsing);});
  auto *timer=new QTimer(&window);QObject::connect(timer,&QTimer::timeout,[&]{for(auto *cell:cells)if(cell->isVisible())cell->update();recordButton->setText(recordingUi.stopping(selected)?"Finishing…":recordingUi.pending(selected)?"Stop recording":"Record");recordButton->setEnabled(!recordingUi.stopping(selected)&&(recordingUi.pending(selected)||(!selected->video.frame().isNull()&&selected->video.status().startsWith("Live"))));recordingUi.poll();audioButton->setText(listen?"Audio: on":"Audio: off");audioLabel->setText(selected->video.audioStatus());});timer->start(40);
- arrange(4);window.statusBar()->showMessage("OPENWATCH TEST   •   Cloud relay prototype   •   Select a cell to control it");window.show();
+ auto *menuBar=window.menuBar();
+ auto *fileMenu=menuBar->addMenu("&File");
+ fileMenu->addAction("Save devices...",save,&QPushButton::click);
+ fileMenu->addAction("Load devices...",load,&QPushButton::click);
+ fileMenu->addSeparator();
+ fileMenu->addAction("Quit",&window,&QWidget::close);
+ auto *configMenu=menuBar->addMenu("&Configuration");
+ auto *autoLoadAction=configMenu->addAction("Load configuration on startup");
+ autoLoadAction->setCheckable(true);autoLoadAction->setChecked(settings.value("autoLoad",false).toBool());
+ autoLoadAction->setToolTip("Ask for the passphrase at startup and restore the saved camera layout");
+ QObject::connect(autoLoadAction,&QAction::toggled,[&](bool on){settings.setValue("autoLoad",on);settings.sync();window.statusBar()->showMessage(on?"Startup configuration loading enabled.":"Startup configuration loading disabled.",5000);});
+ auto *chooseFileAction=configMenu->addAction("Choose configuration file...");
+ QObject::connect(chooseFileAction,&QAction::triggered,[&]{auto path=QFileDialog::getOpenFileName(&window,"Configuration file",settings.value("deviceFile").toString(),"OpenWatch devices (*.owv)");if(path.isEmpty())return;settings.setValue("deviceFile",path);settings.sync();autoLoadAction->setChecked(true);window.statusBar()->showMessage("Configuration file: "+path,5000);});
+ auto *loadNowAction=configMenu->addAction("Load configuration now");
+ QObject::connect(loadNowAction,&QAction::triggered,[&]{auto path=settings.value("deviceFile").toString();if(path.isEmpty()||!QFileInfo::exists(path)){window.statusBar()->showMessage("Choose a configuration file first (Configuration > Choose configuration file...).",6000);return;}loadConfiguration(path);});
+ configMenu->addSeparator();
+ auto *pathAction=configMenu->addAction("No configuration file chosen");pathAction->setEnabled(false);
+ QObject::connect(configMenu,&QMenu::aboutToShow,[&]{auto path=settings.value("deviceFile").toString();pathAction->setText(path.isEmpty()?"No configuration file chosen":path);});
+ auto *devicesMenu=menuBar->addMenu("&Devices");
+ devicesMenu->addAction("Add device...",addDeviceButton,&QPushButton::click);
+ devicesMenu->addAction("Discover devices",discoverButton,&QPushButton::click);
+ devicesMenu->addAction("XMEye recorder",xmButton,&QPushButton::click);
+ devicesMenu->addAction("Assign group",groupButton,&QPushButton::click);
+ devicesMenu->addSeparator();
+ devicesMenu->addAction("Edit device",editDevice,&QPushButton::click);
+ devicesMenu->addAction("Remove device",removeDevice,&QPushButton::click);
+ auto *viewMenu=menuBar->addMenu("&View");
+ viewMenu->addAction("Show / hide sidebar",toggle,&QPushButton::click);
+ auto *gridMenu=viewMenu->addMenu("Grid size");
+ for(int row=0;row<layout->count();++row){auto *sizeAction=gridMenu->addAction(layout->itemText(row));sizeAction->setCheckable(true);sizeAction->setChecked(row==layout->currentIndex());
+  QObject::connect(sizeAction,&QAction::triggered,[&,row]{layout->setCurrentIndex(row);});
+  QObject::connect(layout,&QComboBox::currentIndexChanged,[&,row,sizeAction](int current){sizeAction->setChecked(current==row);});}
+ auto *helpMenu=menuBar->addMenu("&Help");
+ helpMenu->addAction(help); // shared with the Others menu
+ helpMenu->addAction("About OpenWatch",[&]{QMessageBox::about(&window,"OpenWatch","OpenWatch video workspace\nDVRIP · RTSP · RTMP · HTTP(S) HLS playback, grid views, PTZ, recording and encrypted device lists.");});
+ arrange(4);window.statusBar()->showMessage("Ready • Double-click a device or drag it into a grid cell to connect");window.show();
+  // Startup configuration loading: prompt for the passphrase and restore the saved
+  // camera layout. Never runs during scripted runs (--smoke-test, --screenshot, ...).
+  if(settings.value("autoLoad",false).toBool()){
+   bool scripted=false;for(const auto &argument:app.arguments())if(argument.startsWith("--"))scripted=true;
+   const QString path=settings.value("deviceFile").toString();
+   if(!scripted&&!path.isEmpty()&&QFileInfo::exists(path))QTimer::singleShot(0,&window,[&,path]{
+    window.statusBar()->showMessage("Loading configuration...",3000);
+    for(;;){int result=loadConfiguration(path);
+     if(result==2)return; // loaded
+     if(result==0)return; // user dismissed the passphrase prompt
+     if(QMessageBox::question(&window,"Load configuration","The configuration could not be unlocked.\nTry again?")!=QMessageBox::Yes)return;}
+   });
+  }
  if(app.arguments().contains("--navigation-smoke")){window.resize(1280,720);
   for(int recorder=1;recorder<=2;++recorder)for(int channel=1;channel<=4;++channel){urls.append(QUrl(QString("dvrip://192.0.2.%1?channel=%2").arg(recorder).arg(channel-1)));list->addItem(QString("Recorder %1 · CH %2").arg(recorder).arg(channel));}
   urls.append(QUrl("rtsp://192.0.2.10/live"));list->addItem("Garden camera");urls.append(QUrl("rtsp://192.0.2.11/live"));list->addItem("Front door");

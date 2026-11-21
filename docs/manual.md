@@ -43,7 +43,11 @@ Select the camera/stream entry in the sidebar, then click **Remove**. You can al
 
 Select an entry, click **Assign group**, and enter a name. An empty name removes its group. The group menu and name/address search filter the sidebar without disconnecting cameras. Group membership is per stream, including individual NVR channels.
 
-**Save devices** writes an encrypted `.owv` file. Enter and confirm a passphrase of at least 12 characters. Keep it somewhere safe: OpenWatch does not store it and cannot recover it. **Load devices** asks for the passphrase and replaces the current list only after successful decryption and validation. Existing views stop; saved footage remains. Double-click or drag the loaded entries to reconnect. Changes are not automatically saved.
+**Save devices** writes an encrypted `.owv` file containing both the device list and the current camera layout (grid size plus which device sits in which cell). Enter and confirm a passphrase of at least 12 characters. Keep it somewhere safe: OpenWatch does not store it and cannot recover it.
+
+**Load devices** asks for the passphrase and replaces the current list only after successful decryption and validation. If the passphrase is wrong, nothing at all changes: your devices, views and grid stay exactly as they were. On success, existing views stop, the saved footage remains on disk, and the saved layout is restored — the grid returns to its saved size and each saved cell reconnects to its camera automatically. If a saved cell refers to a device that is no longer in the list, the layout is skipped rather than reconnecting to the wrong camera. Changes are not automatically saved.
+
+**Configuration menu** — *Choose configuration file...* selects which `.owv` to use, *Load configuration now* unlocks that file immediately, and *Load configuration on startup* makes OpenWatch prompt for the passphrase right after it opens and rebuild the grid. The chosen file path is remembered between sessions; the passphrase never is. Startup loading is skipped when OpenWatch is launched with command-line flags (test and scripted runs).
 
 ## Camera controls (v0.7)
 
