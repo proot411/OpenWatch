@@ -9,7 +9,7 @@ For an entire XMEye NVR/DVR, click **XMEye recorder** in the sidebar. Enter its 
 1. Choose **Add device**. Give the camera a descriptive name and enter its stream URL. Supply credentials in the separate fields. Use Save devices to retain it in a passphrase-encrypted file.
 2. For XM, use `dvrip://192.168.1.10:34567?channel=0&subtype=0`. Channels are zero-based; subtype 0 is Main, 1 is Extra1. The default username when omitted is admin, with an empty password. Supply your actual device credentials.
 3. For RTSP, use the camera's documented RTSP path, for example `rtsp://192.168.1.10:554/stream1`. For an ONVIF device, use Discover devices to resolve its stream paths.
-4. Select a grid cell, then double-click a device, or drag a device into a cell. The selected cell has a green border. Change the layout using the channel-count menu. Reducing the grid disconnects hidden cells, ending their recordings.
+4. Select a grid cell, then double-click a device, or drag a device into a cell. The selected cell is outlined in teal. Change the layout using the channel-count menu. Reducing the grid disconnects hidden cells, ending their recordings.
 5. Mouse-wheel zoom enlarges around the pointer inside the video. Aspect ratio is preserved. F11 toggles fullscreen for the workspace, and Escape exits it; select one channel for a single-view workspace.
 6. **Snapshot** saves the selected channel's current frame as PNG. **Record** selects an MKV path and waits for the next keyframe with usable timestamps. Check the cell's status for the Recording indicator. **Stop recording** finalizes the file when the next packet arrives. Disconnecting or closing also finalizes it. Recording errors stop that stream and appear in the cell status.
 
