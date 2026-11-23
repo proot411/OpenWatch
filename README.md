@@ -24,7 +24,7 @@ It is written in **C++17**, **Qt 6**, **FFmpeg**, **OpenSSL**, and **SDL2**, wit
 >
 > Recorder file-search behavior depends heavily on firmware. An empty or failed recording search does **not** prove that no footage exists.
 >
-> XMEye CloudID relay operation is implemented. **Direct NAT hole-punching / direct peer-to-peer transport is not currently implemented.**
+> XMEye CloudID relay operation is implemented. Direct peer-to-peer (P2P) UDP NAT traversal may work in some cases but is **not as stable or reliable as the official XMEye applications**.
 
 ![OpenWatch workspace with device list and four empty video cells](images/OpenWatch_test.png)
 
@@ -226,7 +226,7 @@ The current OpenWatch implementation is best described as:
 
 > **XMEye CloudID relay**
 
-OpenWatch does **not** currently implement verified direct UDP NAT hole punching between the client and recorder.
+OpenWatch does **not** currently implement verified direct UDP NAT hole punching between the client and recorder. Direct P2P operation may work in some cases but is **not as stable or reliable as the official XMEye applications**.
 
 The term “P2P” is frequently used broadly by vendor interfaces, but OpenWatch documentation distinguishes:
 
